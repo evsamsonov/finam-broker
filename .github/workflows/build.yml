@@ -1,0 +1,26 @@
+# https://github.com/marketplace/actions/go-release-binaries
+on:
+  release:
+    types: [created]
+jobs:
+  releases-matrix:
+    name: Release Go Binary
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: ["386", amd64, arm64]
+        exclude:
+          - goarch: "386"
+            goos: darwin
+          - goarch: arm64
+            goos: windows
+    steps:
+      - uses: actions/checkout@v3
+      - uses: wangyoucao577/go-release-action@v1.32
+        with:
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          goversion: "https://dl.google.com/go/go1.19.2.linux-amd64.tar.gz"
+          project_path: "./cmd/tinkoff-checkup"
+          binary_name: "tinkoff-checkup"
