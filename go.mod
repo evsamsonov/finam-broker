@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/evsamsonov/FinamTradeGo/v2 v2.0.0-20231218133439-9ddc053a278c
-	github.com/evsamsonov/trengin/v2 v2.0.2
+	github.com/evsamsonov/trengin/v2 v2.0.3-0.20231228142501-370a68fb1ac9
 	github.com/stretchr/testify v1.8.4
 	github.com/tinkoff/invest-api-go-sdk v1.0.2
 	github.com/undefinedlabs/go-mpatch v1.0.6
@@ -29,5 +29,3 @@ require (
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/evsamsonov/trengin/v2 => /Users/evgeny/Projects/trengin
