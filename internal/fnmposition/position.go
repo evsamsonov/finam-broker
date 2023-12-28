@@ -4,15 +4,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/evsamsonov/FinamTradeGo/v2/tradeapi"
+
 	investapi "github.com/tinkoff/invest-api-go-sdk"
 
 	"github.com/evsamsonov/trengin/v2"
 )
-
-type Security struct {
-	Board string
-	Code  string
-}
 
 type Position struct {
 	mtx          sync.Mutex
@@ -21,12 +18,12 @@ type Position struct {
 	stopLossID   int32
 	takeProfitID int32
 	orderTrades  []*investapi.OrderTrade
-	security     Security
+	security     *tradeapi.Security
 }
 
 func NewPosition(
 	pos *trengin.Position,
-	security Security,
+	security *tradeapi.Security,
 	stopLossID int32,
 	takeProfitID int32,
 	closed chan trengin.Position,
@@ -40,12 +37,12 @@ func NewPosition(
 	}
 }
 
-func (p *Position) SetStopLoss(id string, stopLoss float64) {
+func (p *Position) SetStopLoss(id int32, stopLoss float64) {
 	p.stopLossID = id
 	p.position.StopLoss = stopLoss
 }
 
-func (p *Position) SetTakeProfitID(id string, takeProfit float64) {
+func (p *Position) SetTakeProfitID(id int32, takeProfit float64) {
 	p.takeProfitID = id
 	p.position.TakeProfit = takeProfit
 }
@@ -58,11 +55,11 @@ func (p *Position) AddCommission(val float64) {
 	p.position.AddCommission(val)
 }
 
-func (p *Position) StopLossID() string {
+func (p *Position) StopLossID() int32 {
 	return p.stopLossID
 }
 
-func (p *Position) TakeProfitID() string {
+func (p *Position) TakeProfitID() int32 {
 	return p.takeProfitID
 }
 
@@ -71,7 +68,7 @@ func (p *Position) Position() trengin.Position {
 }
 
 func (p *Position) Instrument() *investapi.Instrument {
-	return nil //todo
+	return nil //todo remove?
 	//return p.instrument
 }
 
@@ -86,6 +83,6 @@ func (p *Position) Close(closePrice float64) error {
 		return err
 	}
 	p.closed <- *p.position
-	p.stopLossID, p.takeProfitID = "", ""
+	p.stopLossID, p.takeProfitID = 0, 0
 	return nil
 }

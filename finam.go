@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	finamclient "github.com/evsamsonov/FinamTradeGo/v2"
@@ -33,6 +34,7 @@ type Finam struct {
 	client             finamclient.IFinamClient
 	positionStorage    *fnmposition.Storage
 	orderTradeListener *tradevent.OrderTradeListener
+	securityStorage    securityStorage
 }
 
 type Option func(*Finam)
@@ -75,13 +77,20 @@ func (f *Finam) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("new finam client: %w", err)
 	}
-
 	f.client = finamClient
+
+	securities, err := f.client.GetSecurities()
+	if err != nil {
+		return fmt.Errorf("get securities: %w", err)
+	}
+	f.securityStorage = newSecurityStorage(securities.GetSecurities())
+
 	f.orderTradeListener = tradevent.NewOrderTradeListener(
 		finamClient,
 		f.clientID,
 		f.logger,
 	)
+	f.orderTradeListener.Run(ctx)
 
 	<-ctx.Done()
 	return ctx.Err()
@@ -90,10 +99,11 @@ func (f *Finam) Run(ctx context.Context) error {
 // OpenPosition
 // see https://finamweb.github.io/trade-api-docs/grpc/orders
 func (f *Finam) OpenPosition(ctx context.Context, action trengin.OpenPositionAction) (trengin.Position, trengin.PositionClosed, error) {
-	security := fnmposition.Security{
-		Board: action.SecurityBoard,
-		Code:  action.SecurityCode,
+	security, err := f.securityStorage.Get(action.SecurityBoard, action.SecurityCode)
+	if err != nil {
+		return trengin.Position{}, nil, fmt.Errorf("get security: %w", err)
 	}
+
 	openPrice, commission, err := f.openMarketOrder(ctx, security, action.Type, action.Quantity)
 	if err != nil {
 		return trengin.Position{}, nil, err
@@ -143,22 +153,23 @@ func (f *Finam) ChangeConditionalOrder(ctx context.Context, action trengin.Chang
 // Return openPrice, commission
 func (f *Finam) openMarketOrder(
 	ctx context.Context,
-	security fnmposition.Security,
+	security *tradeapi.Security,
 	positionType trengin.PositionType,
 	quantity int64,
 ) (float64, float64, error) {
 	orders, trades, unsubscribe := f.orderTradeListener.Subscribe()
 	defer unsubscribe()
 
-	orderResult, err := f.client.NewOrder(&tradeapi.NewOrderRequest{
+	req := &tradeapi.NewOrderRequest{
 		ClientId:      f.clientID,
 		SecurityBoard: security.Board,
 		SecurityCode:  security.Code,
 		BuySell:       f.buySell(positionType),
 		Quantity:      int32(quantity),
-		UseCredit:     false,
+		UseCredit:     true, // todo price with protection spread?
 		Property:      tradeapi.OrderProperty_ORDER_PROPERTY_PUT_IN_QUEUE,
-	})
+	}
+	orderResult, err := f.client.NewOrder(req)
 	if err != nil {
 		return 0, 0, fmt.Errorf("new order: %w", err)
 	}
@@ -182,7 +193,7 @@ func (f *Finam) waitTrade(
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(5 * time.Second):
+		case <-time.After(15 * time.Second):
 			return nil, errors.New("trade wait timeout")
 		case o := <-orders:
 			if orderNo != 0 {
@@ -214,15 +225,20 @@ func (f *Finam) buySell(positionType trengin.PositionType) tradeapi.BuySell {
 	return tradeapi.BuySell_BUY_SELL_BUY
 }
 
-func (f *Finam) setStopLoss(security fnmposition.Security, stopLoss float64, position trengin.Position) (int32, error) {
+func (f *Finam) setStopLoss(
+	security *tradeapi.Security,
+	stopLoss float64,
+	position trengin.Position,
+) (int32, error) {
+	protectiveSpread := f.addProtectiveSpread(position.Type, stopLoss)
 	stopResult, err := f.client.NewStop(&tradeapi.NewStopRequest{
 		ClientId:      f.clientID,
 		SecurityBoard: security.Board,
 		SecurityCode:  security.Code,
 		BuySell:       f.buySell(position.Type.Inverse()),
 		StopLoss: &tradeapi.StopLoss{
-			ActivationPrice: stopLoss,
-			Price:           f.addProtectiveSpread(position.Type, stopLoss),
+			ActivationPrice: f.round(stopLoss, security.Decimals),
+			Price:           f.round(protectiveSpread, security.Decimals),
 			Quantity: &tradeapi.StopQuantity{
 				Value: float64(position.Quantity),
 				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
@@ -236,14 +252,14 @@ func (f *Finam) setStopLoss(security fnmposition.Security, stopLoss float64, pos
 
 	return stopResult.StopId, nil
 }
-func (f *Finam) setTakeProfit(security fnmposition.Security, takeProfit float64, position trengin.Position) (int32, error) {
+func (f *Finam) setTakeProfit(security *tradeapi.Security, takeProfit float64, position trengin.Position) (int32, error) {
 	stopResult, err := f.client.NewStop(&tradeapi.NewStopRequest{
 		ClientId:      f.clientID,
 		SecurityBoard: security.Board,
 		SecurityCode:  security.Code,
 		BuySell:       f.buySell(position.Type.Inverse()),
 		TakeProfit: &tradeapi.TakeProfit{
-			ActivationPrice: takeProfit,
+			ActivationPrice: f.round(takeProfit, security.Decimals),
 			MarketPrice:     true,
 			Quantity: &tradeapi.StopQuantity{
 				Value: float64(position.Quantity),
@@ -264,22 +280,6 @@ func (f *Finam) addProtectiveSpread(positionType trengin.PositionType, price flo
 	return price - positionType.Multiplier()*protectiveSpread
 }
 
-//{"order":{"order_no":"24278343703","transaction_id":40725538,"security_code":"SNAP","client_id":"757953RDW8I","status":"ORDER_STATUS_MATCHED","buy_sell":"BUY_SELL_BUY","created_at":{"seconds":"1703184643","nanos":0},"price":0,"quantity":1,"balance":0,"message":"","currency":"USD","condition":{"type":"ORDER_CONDITION_TYPE_UNSPECIFIED","price":0,"time":null},"valid_before":{"type":"ORDER_VALID_BEFORE_TYPE_TILL_END_SESSION","time":null},"accepted_at":null}}
-//21:50:44
-//{"trade":{"security_code":"SNAP","trade_no":"24278449122","order_no":"24278343703","client_id":"757953RDW8I","created_at":{"seconds":"1703184643","nanos":0},"quantity":"1","price":17.15,"value":17.15,"buy_sell":"BUY_SELL_BUY","commission":0,"currency":"USD","accrued_interest":0}}
-//21:50:44
-//{"order":{"order_no":"24278343703","transaction_id":40725538,"security_code":"SNAP","client_id":"757953RDW8I","status":"ORDER_STATUS_ACTIVE","buy_sell":"BUY_SELL_BUY","created_at":{"seconds":"1703184643","nanos":0},"price":0,"quantity":1,"balance":1,"message":"","currency":"USD","condition":{"type":"ORDER_CONDITION_TYPE_UNSPECIFIED","price":0,"time":null},"valid_before":{"type":"ORDER_VALID_BEFORE_TYPE_TILL_END_SESSION","time":null},"accepted_at":null}}
-//21:50:44
-//{"order":{"order_no":"0","transaction_id":40725538,"security_code":"SNAP","client_id":"757953RDW8I","status":"ORDER_STATUS_ACTIVE","buy_sell":"BUY_SELL_BUY","created_at":null,"price":0,"quantity":1,"balance":1,"message":"","currency":"USD","condition":{"type":"ORDER_CONDITION_TYPE_UNSPECIFIED","price":0,"time":null},"valid_before":{"type":"ORDER_VALID_BEFORE_TYPE_TILL_END_SESSION","time":null},"accepted_at":{"seconds":"1703184643","nanos":0}}}
-//21:50:44
-//{"order":{"order_no":"0","transaction_id":40725538,"security_code":"SNAP","client_id":"757953RDW8I","status":"ORDER_STATUS_NONE","buy_sell":"BUY_SELL_BUY","created_at":null,"price":0,"quantity":1,"balance":1,"message":"","currency":"USD","condition":{"type":"ORDER_CONDITION_TYPE_UNSPECIFIED","price":0,"time":null},"valid_before":{"type":"ORDER_VALID_BEFORE_TYPE_TILL_END_SESSION","time":null},"accepted_at":{"seconds":"1703184643","nanos":0}}}
-//21:50:44
-//{"response":{"errors":[],"request_id":"1","success":true}}
-//21:50:34
-//Received response from trade-api.finam.ru
-//21:50:34
-//{"order_trade_subscribe_request":{"client_ids":["757953RDW8I"],"include_orders":true,"include_trades":true,"request_id":"1"}}
-//21:50:34
-//Sent request to trade-api.finam.ru
-//21:50:30
-//Online
+func (f *Finam) round(val float64, decimals int32) float64 {
+	return math.Round(val*math.Pow10(int(decimals))) / math.Pow10(int(decimals))
+}

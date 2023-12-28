@@ -33,19 +33,20 @@ func NewOrderTradeListener(client finamclient.IFinamClient, clientID string, log
 }
 
 func (e *OrderTradeListener) Run(ctx context.Context) error {
-	errChan := e.client.GetErrorChan()
-	orderChan := e.client.GetOrderChan()
-	orderTradeChan := e.client.GetOrderTradeChan()
+	requestID := uuid.New().String()
+	// defer client.CloseConnection() todo добавить
 
-	requestId := uuid.New().String()
 	go e.client.SubscribeOrderTrade(&tradeapi.OrderTradeSubscribeRequest{
-		RequestId:     requestId,
+		RequestId:     requestID,
 		IncludeTrades: true,
 		IncludeOrders: true,
 		ClientIds:     []string{e.clientID},
 	})
-	defer e.close(requestId)
+	defer e.close(requestID)
 
+	errChan := e.client.GetErrorChan()
+	orderChan := e.client.GetOrderChan()
+	orderTradeChan := e.client.GetOrderTradeChan()
 	for {
 		select {
 		case <-ctx.Done():
@@ -53,10 +54,18 @@ func (e *OrderTradeListener) Run(ctx context.Context) error {
 		case err := <-errChan:
 			return fmt.Errorf("subscribe order trade: %w", err)
 		case order := <-orderChan:
+			if order == nil {
+				e.logger.Debug("Nil order received")
+				continue
+			}
 			e.logger.Debug("Order received", zap.Any("orders", order))
 
 			e.sendOrders(ctx, order)
 		case trade := <-orderTradeChan:
+			if trade == nil {
+				e.logger.Debug("Nil trade received")
+				continue
+			}
 			e.logger.Debug("Trade received", zap.Any("orderTrade", trade))
 
 			e.sendTrades(ctx, trade)
@@ -111,7 +120,6 @@ func (e *OrderTradeListener) sendTrades(ctx context.Context, trade *tradeapi.Tra
 			}
 		}(ch)
 	}
-
 }
 
 func (e *OrderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) {
@@ -128,9 +136,9 @@ func (e *OrderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) 
 	}
 }
 
-func (e *OrderTradeListener) close(requestId string) {
+func (e *OrderTradeListener) close(requestID string) {
 	resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
-		RequestId: requestId,
+		RequestId: requestID,
 	})
 	if !resp.Success {
 		e.logger.Error("Failed to unsubscribe order trade", zap.Any("errors", resp.Errors))

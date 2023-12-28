@@ -22,5 +22,5 @@ jobs:
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
           goversion: "https://dl.google.com/go/go1.19.2.linux-amd64.tar.gz"
-          project_path: "./cmd/tinkoff-checkup"
-          binary_name: "tinkoff-checkup"
+          project_path: "./cmd/finam-checkup"
+          binary_name: "finam-checkup"

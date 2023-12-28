@@ -1,11 +1,10 @@
 module github.com/evsamsonov/finam-broker
 
-go 1.19
+go 1.21
 
 require (
 	github.com/evsamsonov/FinamTradeGo/v2 v2.0.0-20231218133439-9ddc053a278c
 	github.com/evsamsonov/trengin/v2 v2.0.2
-	github.com/google/uuid v1.3.1
 	github.com/stretchr/testify v1.8.4
 	github.com/tinkoff/invest-api-go-sdk v1.0.2
 	github.com/undefinedlabs/go-mpatch v1.0.6
@@ -17,6 +16,7 @@ require (
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/google/uuid v1.3.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect

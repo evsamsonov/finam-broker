@@ -29,12 +29,12 @@ import (
 	"os"
 	"syscall"
 
-	fnmbroker "github.com/evsamsonov/finam-broker"
-	"github.com/evsamsonov/finam-broker/internal/fnmposition"
-	"github.com/evsamsonov/trengin/v2"
+	trengin "github.com/evsamsonov/trengin/v2"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
+
+	fnmbroker "github.com/evsamsonov/finam-broker"
 )
 
 func main() {
@@ -51,15 +51,11 @@ func main() {
 	securityCode := os.Args[3]
 
 	verbose := flag.Bool("v", false, "")
-	if err := flag.CommandLine.Parse(os.Args[3:]); err != nil {
+	if err := flag.CommandLine.Parse(os.Args[4:]); err != nil {
 		log.Fatalf("Failed to parse args: %s", err)
 	}
 
-	security := fnmposition.Security{
-		Board: securityBoard,
-		Code:  securityCode,
-	}
-	checkupParams := NewCheckupParams(clientID, security)
+	checkupParams := NewCheckupParams(clientID, securityBoard, securityCode)
 	if err := checkupParams.AskUser(); err != nil {
 		log.Fatalf("Failed to get checkup params: %s", err)
 	}
@@ -76,17 +72,19 @@ func main() {
 
 type CheckUpArgs struct {
 	clientID         string
-	security         fnmposition.Security
+	securityBoard    string
+	securityCode     string
 	token            string
 	stopLossOffset   float64
 	takeProfitOffset float64
 	positionType     trengin.PositionType
 }
 
-func NewCheckupParams(clientID string, security fnmposition.Security) CheckUpArgs {
+func NewCheckupParams(clientID, securityBoard, securityCode string) CheckUpArgs {
 	return CheckUpArgs{
-		clientID: clientID,
-		security: security,
+		clientID:      clientID,
+		securityBoard: securityBoard,
+		securityCode:  securityCode,
 	}
 }
 
@@ -147,9 +145,6 @@ func NewCheckuper(verbose bool) (*Checkuper, error) {
 
 func (t *Checkuper) CheckUp(params CheckUpArgs) error {
 	broker := fnmbroker.New(params.token, params.clientID, fnmbroker.WithLogger(t.logger))
-	//if err != nil {
-	//	return fmt.Errorf("create tinkoff broker: %w", err)
-	//}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	g, ctx := errgroup.WithContext(ctx)
@@ -169,12 +164,10 @@ func (t *Checkuper) CheckUp(params CheckUpArgs) error {
 		defer cancel()
 		t.WaitAnyKey("Press any key for open position...")
 
-		return nil
-
 		openPositionAction := trengin.OpenPositionAction{
 			Type:             params.positionType,
-			SecurityBoard:    params.security.Board,
-			SecurityCode:     params.security.Code,
+			SecurityBoard:    params.securityBoard,
+			SecurityCode:     params.securityCode,
 			Quantity:         1,
 			StopLossOffset:   params.stopLossOffset,
 			TakeProfitOffset: params.takeProfitOffset,
@@ -207,6 +200,8 @@ func (t *Checkuper) CheckUp(params CheckUpArgs) error {
 			return nil
 		})
 		t.WaitAnyKey("Press any key for reduce by half conditional orders...")
+
+		return nil
 
 		changeConditionalOrderAction := trengin.ChangeConditionalOrderAction{
 			PositionID: position.ID,

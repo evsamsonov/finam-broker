@@ -31,8 +31,8 @@ func Test_currentPosition_Close(t *testing.T) {
 	closed := make(chan trengin.Position, 1)
 	currentPosition := Position{
 		position:     pos,
-		stopLossID:   "2",
-		takeProfitID: "3",
+		stopLossID:   2,
+		takeProfitID: 3,
 		closed:       closed,
 	}
 	err = currentPosition.Close(123.45)
