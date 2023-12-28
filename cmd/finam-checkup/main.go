@@ -201,8 +201,6 @@ func (t *Checkuper) CheckUp(params CheckUpArgs) error {
 		})
 		t.WaitAnyKey("Press any key for reduce by half conditional orders...")
 
-		return nil
-
 		changeConditionalOrderAction := trengin.ChangeConditionalOrderAction{
 			PositionID: position.ID,
 			StopLoss:   position.OpenPrice - params.stopLossOffset/2*position.Type.Multiplier(),

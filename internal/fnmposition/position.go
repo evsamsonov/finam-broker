@@ -6,8 +6,6 @@ import (
 
 	"github.com/evsamsonov/FinamTradeGo/v2/tradeapi"
 
-	investapi "github.com/tinkoff/invest-api-go-sdk"
-
 	"github.com/evsamsonov/trengin/v2"
 )
 
@@ -17,7 +15,6 @@ type Position struct {
 	closed       chan trengin.Position
 	stopLossID   int32
 	takeProfitID int32
-	orderTrades  []*investapi.OrderTrade
 	security     *tradeapi.Security
 }
 
@@ -47,10 +44,6 @@ func (p *Position) SetTakeProfitID(id int32, takeProfit float64) {
 	p.position.TakeProfit = takeProfit
 }
 
-func (p *Position) AddOrderTrade(orderTrades ...*investapi.OrderTrade) {
-	p.orderTrades = append(p.orderTrades, orderTrades...)
-}
-
 func (p *Position) AddCommission(val float64) {
 	p.position.AddCommission(val)
 }
@@ -65,17 +58,6 @@ func (p *Position) TakeProfitID() int32 {
 
 func (p *Position) Position() trengin.Position {
 	return *p.position
-}
-
-func (p *Position) Instrument() *investapi.Instrument {
-	return nil //todo remove?
-	//return p.instrument
-}
-
-func (p *Position) OrderTrades() []*investapi.OrderTrade {
-	result := make([]*investapi.OrderTrade, len(p.orderTrades))
-	copy(result, p.orderTrades)
-	return p.orderTrades
 }
 
 func (p *Position) Close(closePrice float64) error {

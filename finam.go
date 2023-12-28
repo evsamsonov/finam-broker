@@ -90,15 +90,19 @@ func (f *Finam) Run(ctx context.Context) error {
 		f.clientID,
 		f.logger,
 	)
-	f.orderTradeListener.Run(ctx)
+	if err := f.orderTradeListener.Run(ctx); err != nil {
+		return fmt.Errorf("order trade listener: %w", err)
+	}
 
-	<-ctx.Done()
 	return ctx.Err()
 }
 
 // OpenPosition
 // see https://finamweb.github.io/trade-api-docs/grpc/orders
-func (f *Finam) OpenPosition(ctx context.Context, action trengin.OpenPositionAction) (trengin.Position, trengin.PositionClosed, error) {
+func (f *Finam) OpenPosition(
+	ctx context.Context,
+	action trengin.OpenPositionAction,
+) (trengin.Position, trengin.PositionClosed, error) {
 	security, err := f.securityStorage.Get(action.SecurityBoard, action.SecurityCode)
 	if err != nil {
 		return trengin.Position{}, nil, fmt.Errorf("get security: %w", err)
@@ -137,16 +141,21 @@ func (f *Finam) OpenPosition(ctx context.Context, action trengin.OpenPositionAct
 	)
 
 	return *position, positionClosed, nil
-
 }
 
-func (f *Finam) ClosePosition(ctx context.Context, action trengin.ClosePositionAction) (trengin.Position, error) {
-	//TODO implement me
+func (f *Finam) ClosePosition(
+	ctx context.Context,
+	action trengin.ClosePositionAction,
+) (trengin.Position, error) {
+	// TODO implement me
 	panic("implement me")
 }
 
-func (f *Finam) ChangeConditionalOrder(ctx context.Context, action trengin.ChangeConditionalOrderAction) (trengin.Position, error) {
-	//TODO implement me
+func (f *Finam) ChangeConditionalOrder(
+	ctx context.Context,
+	action trengin.ChangeConditionalOrderAction,
+) (trengin.Position, error) {
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -215,7 +224,6 @@ func (f *Finam) waitTrade(
 			}
 		}
 	}
-
 }
 
 func (f *Finam) buySell(positionType trengin.PositionType) tradeapi.BuySell {
@@ -252,7 +260,11 @@ func (f *Finam) setStopLoss(
 
 	return stopResult.StopId, nil
 }
-func (f *Finam) setTakeProfit(security *tradeapi.Security, takeProfit float64, position trengin.Position) (int32, error) {
+func (f *Finam) setTakeProfit(
+	security *tradeapi.Security,
+	takeProfit float64,
+	position trengin.Position,
+) (int32, error) {
 	stopResult, err := f.client.NewStop(&tradeapi.NewStopRequest{
 		ClientId:      f.clientID,
 		SecurityBoard: security.Board,
