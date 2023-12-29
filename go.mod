@@ -7,7 +7,7 @@ require (
 	github.com/evsamsonov/trengin/v2 v2.0.3-0.20231228142501-370a68fb1ac9
 	github.com/google/uuid v1.5.0
 	github.com/stretchr/testify v1.8.4
-	github.com/undefinedlabs/go-mpatch v1.0.7
+	github.com/undefinedlabs/go-mpatch v1.0.6
 	go.uber.org/zap v1.26.0
 	golang.org/x/sync v0.5.0
 	golang.org/x/term v0.15.0
