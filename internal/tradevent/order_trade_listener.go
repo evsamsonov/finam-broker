@@ -137,12 +137,13 @@ func (e *OrderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) 
 }
 
 func (e *OrderTradeListener) close(requestID string) {
-	resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
+	//todo понять почему зависаем
+	/*resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
 		RequestId: requestID,
 	})
 	if !resp.Success {
 		e.logger.Error("Failed to unsubscribe order trade", zap.Any("errors", resp.Errors))
-	}
+	}*/
 
 	e.mu.Lock()
 	defer e.mu.Unlock()

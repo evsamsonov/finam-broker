@@ -34,7 +34,7 @@ type Finam struct {
 	client             finamclient.IFinamClient
 	positionStorage    *fnmposition.Storage
 	orderTradeListener *tradevent.OrderTradeListener
-	securityStorage    securityStorage
+	securityProvider   securityProvider
 }
 
 type Option func(*Finam)
@@ -78,12 +78,10 @@ func (f *Finam) Run(ctx context.Context) error {
 		return fmt.Errorf("new finam client: %w", err)
 	}
 	f.client = finamClient
-
-	securities, err := f.client.GetSecurities()
+	f.securityProvider, err = newSecurityProvider(finamClient, f.logger)
 	if err != nil {
-		return fmt.Errorf("get securities: %w", err)
+		return fmt.Errorf("new security provider: %w", err)
 	}
-	f.securityStorage = newSecurityStorage(securities.GetSecurities())
 
 	f.orderTradeListener = tradevent.NewOrderTradeListener(
 		finamClient,
@@ -94,7 +92,7 @@ func (f *Finam) Run(ctx context.Context) error {
 		return fmt.Errorf("order trade listener: %w", err)
 	}
 
-	return ctx.Err()
+	return nil
 }
 
 // OpenPosition
@@ -103,7 +101,7 @@ func (f *Finam) OpenPosition(
 	ctx context.Context,
 	action trengin.OpenPositionAction,
 ) (trengin.Position, trengin.PositionClosed, error) {
-	security, err := f.securityStorage.Get(action.SecurityBoard, action.SecurityCode)
+	security, err := f.securityProvider.Get(action.SecurityBoard, action.SecurityCode)
 	if err != nil {
 		return trengin.Position{}, nil, fmt.Errorf("get security: %w", err)
 	}
