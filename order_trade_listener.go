@@ -167,8 +167,8 @@ func (e *OrderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) 
 	}
 }
 
-func (e *OrderTradeListener) close(requestID string) {
-	//todo понять почему зависаем
+func (e *OrderTradeListener) close(requestID string) { //nolint: unparam
+	// todo понять почему зависаем
 	/*resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
 		RequestId: requestID,
 	})

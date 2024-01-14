@@ -41,7 +41,10 @@ func (s securityProvider) key(board, code string) string {
 	return fmt.Sprintf("%s:%s", board, code)
 }
 
-func (s securityProvider) getSecurities(client finamclient.IFinamClient, logger *zap.Logger) ([]*tradeapi.Security, error) {
+func (s securityProvider) getSecurities(
+	client finamclient.IFinamClient,
+	logger *zap.Logger,
+) ([]*tradeapi.Security, error) {
 	if file, err := os.Open(securityProviderFile); !errors.Is(err, os.ErrNotExist) {
 		return s.readFromFile(file, logger)
 	}
@@ -65,7 +68,10 @@ func (s securityProvider) readFromFile(file *os.File, logger *zap.Logger) ([]*tr
 	return securities, nil
 }
 
-func (s securityProvider) getFromAPI(client finamclient.IFinamClient, logger *zap.Logger) ([]*tradeapi.Security, error) {
+func (s securityProvider) getFromAPI(
+	client finamclient.IFinamClient,
+	logger *zap.Logger,
+) ([]*tradeapi.Security, error) {
 	securities, err := client.GetSecurities()
 	if err != nil {
 		return nil, fmt.Errorf("get securities: %w", err)
