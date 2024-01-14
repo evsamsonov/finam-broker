@@ -1,4 +1,4 @@
-package tradevent
+package fnmbroker
 
 import (
 	"context"
@@ -15,27 +15,46 @@ import (
 const sendTimeout = 5 * time.Second
 
 type OrderTradeListener struct {
-	client   finamclient.IFinamClient
 	clientID string
+	token    string
 	logger   *zap.Logger
 
+	client     finamclient.IFinamClient
 	mu         sync.RWMutex
 	orderChans []chan *tradeapi.OrderEvent
 	tradeChans []chan *tradeapi.TradeEvent
 }
 
-func NewOrderTradeListener(client finamclient.IFinamClient, clientID string, logger *zap.Logger) *OrderTradeListener {
+func NewOrderTradeListener(clientID, token string, logger *zap.Logger) *OrderTradeListener {
 	return &OrderTradeListener{
-		client:   client,
 		clientID: clientID,
+		token:    token,
 		logger:   logger,
 	}
 }
 
 func (e *OrderTradeListener) Run(ctx context.Context) error {
-	requestID := uuid.New().String()
-	// defer client.CloseConnection() todo добавить
+	for {
+		var err error
+		e.client, err = finamclient.NewFinamClient(e.clientID, e.token, ctx)
+		if err != nil {
+			return fmt.Errorf("new finam client: %w", err)
+		}
 
+		if err := e.run(ctx); err != nil {
+			e.logger.Error("Failed to subscribe. Recreate finam client...", zap.Error(err))
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+}
+
+func (e *OrderTradeListener) run(ctx context.Context) error {
+	requestID := uuid.New().String()[:16]
 	go e.client.SubscribeOrderTrade(&tradeapi.OrderTradeSubscribeRequest{
 		RequestId:     requestID,
 		IncludeTrades: true,
@@ -53,6 +72,15 @@ func (e *OrderTradeListener) Run(ctx context.Context) error {
 			return ctx.Err()
 		case err := <-errChan:
 			return fmt.Errorf("subscribe order trade: %w", err)
+		case <-time.After(1 * time.Minute):
+			resp := e.client.SubscribeKeepAlive(&tradeapi.KeepAliveRequest{
+				RequestId: uuid.New().String()[:16],
+			})
+			if !resp.Success {
+				e.logger.Error("Failed to send keep alive", zap.Any("resp", resp))
+				continue
+			}
+			e.logger.Debug("Keep alive response", zap.Any("resp", resp))
 		case order := <-orderChan:
 			if order == nil {
 				e.logger.Debug("Nil order received")
@@ -136,13 +164,14 @@ func (e *OrderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) 
 	}
 }
 
-func (e *OrderTradeListener) close(requestID string) {
-	resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
+func (e *OrderTradeListener) close(requestID string) { //nolint: unparam
+	// todo понять почему зависаем
+	/*resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
 		RequestId: requestID,
 	})
 	if !resp.Success {
 		e.logger.Error("Failed to unsubscribe order trade", zap.Any("errors", resp.Errors))
-	}
+	}*/
 
 	e.mu.Lock()
 	defer e.mu.Unlock()

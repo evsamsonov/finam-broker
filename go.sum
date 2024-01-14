@@ -1,8 +1,8 @@
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/evsamsonov/FinamTradeGo/v2 v2.0.0-20231218133439-9ddc053a278c h1:iPrEKbR1mRibUE4D4I5UxtNqcZ7F1iM5DthEnKeb8IQ=
-github.com/evsamsonov/FinamTradeGo/v2 v2.0.0-20231218133439-9ddc053a278c/go.mod h1:8vX5mVM7/7XXm4l7h1WmxzxjKjdYc/CvnW5v1vj1eOM=
+github.com/evsamsonov/FinamTradeGo/v2 v2.0.0-20240114093707-7a097b3e0bb2 h1:TP9CqCAQHFrc6W6y4lHU3/IN/xmQJXl5rMt9H+GUSOo=
+github.com/evsamsonov/FinamTradeGo/v2 v2.0.0-20240114093707-7a097b3e0bb2/go.mod h1:8vX5mVM7/7XXm4l7h1WmxzxjKjdYc/CvnW5v1vj1eOM=
 github.com/evsamsonov/trengin/v2 v2.0.3-0.20231228142501-370a68fb1ac9 h1:WzUAZPa9uoZ4Blm6Oe3axx7tTtQuSECkUHhLubr03k0=
 github.com/evsamsonov/trengin/v2 v2.0.3-0.20231228142501-370a68fb1ac9/go.mod h1:merjbl+KOokEz3PlhaDlQXoupTKgjF3kJxUMQVYRLCc=
 github.com/golang/protobuf v1.5.0/go.mod h1:FsONVRAS9T7sI+LIUmWTfcYkHO4aIWwzhcaSAoJOfIk=
