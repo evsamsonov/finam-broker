@@ -3,7 +3,7 @@ module github.com/evsamsonov/finam-broker
 go 1.21
 
 require (
-	github.com/evsamsonov/FinamTradeGo/v2 v2.0.0-20231218133439-9ddc053a278c
+	github.com/evsamsonov/FinamTradeGo/v2 v2.0.0-20240114093707-7a097b3e0bb2
 	github.com/evsamsonov/trengin/v2 v2.0.3-0.20231228142501-370a68fb1ac9
 	github.com/google/uuid v1.5.0
 	github.com/stretchr/testify v1.8.4

@@ -16,7 +16,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/evsamsonov/finam-broker/internal/fnmposition"
-	"github.com/evsamsonov/finam-broker/internal/tradevent"
 )
 
 var _ trengin.Broker = &Finam{}
@@ -33,7 +32,7 @@ type Finam struct {
 
 	client             finamclient.IFinamClient
 	positionStorage    *fnmposition.Storage
-	orderTradeListener *tradevent.OrderTradeListener
+	orderTradeListener *OrderTradeListener
 	securityProvider   securityProvider
 }
 
@@ -83,11 +82,7 @@ func (f *Finam) Run(ctx context.Context) error {
 		return fmt.Errorf("new security provider: %w", err)
 	}
 
-	f.orderTradeListener = tradevent.NewOrderTradeListener(
-		finamClient,
-		f.clientID,
-		f.logger,
-	)
+	f.orderTradeListener = NewOrderTradeListener(f.clientID, f.token, f.logger)
 	if err := f.orderTradeListener.Run(ctx); err != nil {
 		return fmt.Errorf("order trade listener: %w", err)
 	}
@@ -249,7 +244,7 @@ func (f *Finam) setStopLoss(
 				Value: float64(position.Quantity),
 				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
 			},
-			UseCredit: false, // on?
+			UseCredit: true, // todo сделать опцией
 		},
 	})
 	if err != nil {
@@ -275,7 +270,7 @@ func (f *Finam) setTakeProfit(
 				Value: float64(position.Quantity),
 				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
 			},
-			UseCredit: false, // todo on?
+			UseCredit: true, // todo on?
 		},
 	})
 	if err != nil {
