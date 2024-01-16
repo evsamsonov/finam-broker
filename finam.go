@@ -23,31 +23,41 @@ const (
 )
 
 type Finam struct {
-	clientID                string
-	token                   string
-	protectiveSpreadPercent float64
-	logger                  *zap.Logger
+	clientID string
+	token    string
+	logger   *zap.Logger
 
-	client             finamclient.IFinamClient
-	positionStorage    *positionStorage
-	orderTradeListener *orderTradeListener
-	securityProvider   securityProvider
+	client                  finamclient.IFinamClient
+	positionStorage         *positionStorage
+	orderTradeListener      *orderTradeListener
+	securityProvider        securityProvider
+	protectiveSpreadPercent float64
+	useCredit               bool
 }
 
 type Option func(*Finam)
 
 // WithLogger returns Option which sets logger. The default logger is no-op Logger
 func WithLogger(logger *zap.Logger) Option {
-	return func(t *Finam) {
-		t.logger = logger
+	return func(f *Finam) {
+		f.logger = logger
 	}
 }
 
 // WithProtectiveSpreadPercent returns Option which sets protective spread
 // in percent for executing orders. The default value is 1%
+// todo использовать при открытии позиции
 func WithProtectiveSpreadPercent(protectiveSpread float64) Option {
 	return func(f *Finam) {
 		f.protectiveSpreadPercent = protectiveSpread
+	}
+}
+
+// WithUseCredit returns Option which sets using credit funds for executing orders.
+// The default is not use credit
+func WithUseCredit(useCredit bool) Option {
+	return func(f *Finam) {
+		f.useCredit = useCredit
 	}
 }
 
@@ -132,27 +142,80 @@ func (f *Finam) OpenPosition(
 	}
 
 	positionClosed := make(chan trengin.Position, 1)
-	f.positionStorage.Store(
-		newFinamPosition(position, security, stopLossID, takeProfitID, positionClosed),
-	)
+	fnmPosition := newFinamPosition(position, security, stopLossID, takeProfitID, positionClosed)
+	f.positionStorage.Store(fnmPosition)
 
 	return *position, positionClosed, nil
+}
+
+func (f *Finam) ChangeConditionalOrder(
+	_ context.Context,
+	action trengin.ChangeConditionalOrderAction,
+) (trengin.Position, error) {
+	fnmPosition, unlockPosition, err := f.positionStorage.Load(action.PositionID)
+	if err != nil {
+		return trengin.Position{}, fmt.Errorf("load position: %w", err)
+	}
+	defer unlockPosition()
+
+	if action.StopLoss != 0 {
+		if _, err := f.client.CancelStop(fnmPosition.StopLossID()); err != nil {
+			return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+		}
+
+		stopLossID, err := f.setStopLoss(fnmPosition.Security(), action.StopLoss, fnmPosition.Position())
+		if err != nil {
+			return trengin.Position{}, fmt.Errorf("set stop loss: %w", err)
+		}
+		fnmPosition.SetStopLoss(stopLossID, action.StopLoss)
+	}
+
+	if action.TakeProfit != 0 {
+		if _, err := f.client.CancelStop(fnmPosition.TakeProfitID()); err != nil {
+			return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+		}
+
+		takeProfitID, err := f.setTakeProfit(fnmPosition.Security(), action.TakeProfit, fnmPosition.Position())
+		if err != nil {
+			return trengin.Position{}, fmt.Errorf("set take profit: %w", err)
+		}
+		fnmPosition.SetTakeProfitID(takeProfitID, action.TakeProfit)
+	}
+	return fnmPosition.Position(), nil
+
 }
 
 func (f *Finam) ClosePosition(
 	ctx context.Context,
 	action trengin.ClosePositionAction,
 ) (trengin.Position, error) {
-	// TODO implement me
-	panic("implement me")
-}
+	fnmPosition, unlockPosition, err := f.positionStorage.Load(action.PositionID)
+	if err != nil {
+		return trengin.Position{}, fmt.Errorf("load position: %w", err)
+	}
+	defer unlockPosition()
 
-func (f *Finam) ChangeConditionalOrder(
-	ctx context.Context,
-	action trengin.ChangeConditionalOrderAction,
-) (trengin.Position, error) {
-	// TODO implement me
-	panic("implement me")
+	if _, err := f.client.CancelStop(fnmPosition.StopLossID()); err != nil {
+		return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+	}
+	if _, err := f.client.CancelStop(fnmPosition.TakeProfitID()); err != nil {
+		return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+	}
+
+	security := fnmPosition.Security()
+	position := fnmPosition.Position()
+	closePrice, commission, err := f.openMarketOrder(ctx, security, position.Type.Inverse(), position.Quantity)
+	if err != nil {
+		return trengin.Position{}, fmt.Errorf("open market order: %w", err)
+	}
+
+	position.AddCommission(commission)
+	if err := fnmPosition.Close(closePrice); err != nil {
+		return trengin.Position{}, fmt.Errorf("close: %w", err)
+	}
+
+	f.logger.Info("Position was closed", zap.Any("fnmPosition", fnmPosition))
+	return fnmPosition.Position(), nil
 }
 
 // Return openPrice, commission
@@ -171,9 +234,8 @@ func (f *Finam) openMarketOrder(
 		SecurityCode:  security.Code,
 		BuySell:       f.buySell(positionType),
 		Quantity:      int32(quantity),
-		// todo price with protection spread?
-		UseCredit: true,
-		Property:  tradeapi.OrderProperty_ORDER_PROPERTY_PUT_IN_QUEUE,
+		UseCredit:     f.useCredit,
+		Property:      tradeapi.OrderProperty_ORDER_PROPERTY_PUT_IN_QUEUE,
 	}
 	orderResult, err := f.client.NewOrder(req)
 	if err != nil {
@@ -184,7 +246,8 @@ func (f *Finam) openMarketOrder(
 	if err != nil {
 		return 0, 0, fmt.Errorf("wait trade: %w", err)
 	}
-	// todo комиссия в рублях??
+	f.logger.Debug("Market order executed", zap.Any("trade", trade))
+	// todo привести комиссию в рублях в доллары
 	return trade.Price, trade.Commission, nil
 }
 
@@ -248,7 +311,7 @@ func (f *Finam) setStopLoss(
 				Value: float64(position.Quantity),
 				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
 			},
-			UseCredit: false, // on?
+			UseCredit: f.useCredit,
 		},
 	})
 	if err != nil {
@@ -277,7 +340,7 @@ func (f *Finam) setTakeProfit(
 				Value: float64(position.Quantity),
 				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
 			},
-			UseCredit: false, // todo on?
+			UseCredit: f.useCredit,
 		},
 	})
 	if err != nil {

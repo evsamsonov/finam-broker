@@ -56,6 +56,10 @@ func (p *finamPosition) TakeProfitID() int32 {
 	return p.takeProfitID
 }
 
+func (p *finamPosition) Security() *tradeapi.Security {
+	return p.security
+}
+
 func (p *finamPosition) Position() trengin.Position {
 	return *p.position
 }
