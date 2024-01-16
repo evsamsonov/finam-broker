@@ -30,7 +30,7 @@ type Finam struct {
 
 	client             finamclient.IFinamClient
 	positionStorage    *positionStorage
-	orderTradeListener *OrderTradeListener
+	orderTradeListener *orderTradeListener
 	securityProvider   securityProvider
 }
 
@@ -81,7 +81,7 @@ func (f *Finam) Run(ctx context.Context) error {
 		return fmt.Errorf("get securities: %w", err)
 	}
 
-	f.orderTradeListener = NewOrderTradeListener(
+	f.orderTradeListener = newOrderTradeListener(
 		f.clientID,
 		f.token,
 		f.logger,

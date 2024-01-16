@@ -15,7 +15,7 @@ import (
 
 const sendTimeout = 5 * time.Second
 
-type OrderTradeListener struct {
+type orderTradeListener struct {
 	clientID string
 	token    string
 	logger   *zap.Logger
@@ -26,15 +26,15 @@ type OrderTradeListener struct {
 	tradeChans []chan *tradeapi.TradeEvent
 }
 
-func NewOrderTradeListener(clientID, token string, logger *zap.Logger) *OrderTradeListener {
-	return &OrderTradeListener{
+func newOrderTradeListener(clientID, token string, logger *zap.Logger) *orderTradeListener {
+	return &orderTradeListener{
 		clientID: clientID,
 		token:    token,
 		logger:   logger,
 	}
 }
 
-func (e *OrderTradeListener) Run(ctx context.Context) error {
+func (e *orderTradeListener) Run(ctx context.Context) error {
 	for {
 		var err error
 		e.client, err = finamclient.NewFinamClient(e.clientID, e.token, ctx)
@@ -51,7 +51,7 @@ func (e *OrderTradeListener) Run(ctx context.Context) error {
 	}
 }
 
-func (e *OrderTradeListener) run(ctx context.Context) error {
+func (e *orderTradeListener) run(ctx context.Context) error {
 	requestID := uuid.New().String()[:16]
 	go e.client.SubscribeOrderTrade(&tradeapi.OrderTradeSubscribeRequest{
 		RequestId:     requestID,
@@ -100,7 +100,7 @@ func (e *OrderTradeListener) run(ctx context.Context) error {
 }
 
 // unsubscribe third argument
-func (e *OrderTradeListener) Subscribe() (<-chan *tradeapi.OrderEvent, <-chan *tradeapi.TradeEvent, func()) {
+func (e *orderTradeListener) Subscribe() (<-chan *tradeapi.OrderEvent, <-chan *tradeapi.TradeEvent, func()) {
 	orderChan := make(chan *tradeapi.OrderEvent)
 	tradeChan := make(chan *tradeapi.TradeEvent)
 
@@ -114,7 +114,7 @@ func (e *OrderTradeListener) Subscribe() (<-chan *tradeapi.OrderEvent, <-chan *t
 	}
 }
 
-func (e *OrderTradeListener) sendOrders(ctx context.Context, order *tradeapi.OrderEvent) {
+func (e *orderTradeListener) sendOrders(ctx context.Context, order *tradeapi.OrderEvent) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -131,7 +131,7 @@ func (e *OrderTradeListener) sendOrders(ctx context.Context, order *tradeapi.Ord
 	}
 }
 
-func (e *OrderTradeListener) sendTrades(ctx context.Context, trade *tradeapi.TradeEvent) {
+func (e *orderTradeListener) sendTrades(ctx context.Context, trade *tradeapi.TradeEvent) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -148,7 +148,7 @@ func (e *OrderTradeListener) sendTrades(ctx context.Context, trade *tradeapi.Tra
 	}
 }
 
-func (e *OrderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) {
+func (e *orderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -162,7 +162,7 @@ func (e *OrderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) 
 	}
 }
 
-func (e *OrderTradeListener) close(requestID string) { //nolint: unparam
+func (e *orderTradeListener) close(requestID string) { //nolint: unparam
 	// todo понять почему зависаем
 	/*resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
 		RequestId: requestID,
