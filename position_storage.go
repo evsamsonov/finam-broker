@@ -1,4 +1,4 @@
-package fnmposition
+package fnmbroker
 
 import (
 	"context"
@@ -9,22 +9,22 @@ import (
 	"github.com/evsamsonov/trengin/v2"
 )
 
-type Storage struct {
+type positionStorage struct {
 	mtx                    sync.RWMutex
-	list                   map[trengin.PositionID]*Position
+	list                   map[trengin.PositionID]*finamPosition
 	deleteTimeout          time.Duration
 	closedPositionLifetime time.Duration
 }
 
-func NewStorage() *Storage {
-	return &Storage{
-		list:                   make(map[trengin.PositionID]*Position),
+func newPositionStorage() *positionStorage {
+	return &positionStorage{
+		list:                   make(map[trengin.PositionID]*finamPosition),
 		deleteTimeout:          5 * time.Minute,
 		closedPositionLifetime: 5 * time.Minute,
 	}
 }
 
-func (s *Storage) Run(ctx context.Context) error {
+func (s *positionStorage) Run(ctx context.Context) error {
 	for {
 		s.deleteClosedPositions()
 		select {
@@ -35,29 +35,29 @@ func (s *Storage) Run(ctx context.Context) error {
 	}
 }
 
-func (s *Storage) Store(pos *Position) {
+func (s *positionStorage) Store(pos *finamPosition) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 	s.list[pos.position.ID] = pos
 }
 
-func (s *Storage) Load(id trengin.PositionID) (*Position, func(), error) {
+func (s *positionStorage) Load(id trengin.PositionID) (*finamPosition, func(), error) {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
 
 	pos, ok := s.list[id]
 	if !ok || pos.position.IsClosed() {
-		return &Position{}, func() {}, errors.New("position not found")
+		return &finamPosition{}, func() {}, errors.New("position not found")
 	}
 	pos.mtx.Lock()
 	return pos, func() { pos.mtx.Unlock() }, nil
 }
 
-func (s *Storage) ForEach(f func(pos *Position) error) error {
+func (s *positionStorage) ForEach(f func(pos *finamPosition) error) error {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
 
-	apply := func(pos *Position) error {
+	apply := func(pos *finamPosition) error {
 		pos.mtx.Lock()
 		defer pos.mtx.Unlock()
 
@@ -79,7 +79,7 @@ func (s *Storage) ForEach(f func(pos *Position) error) error {
 	return nil
 }
 
-func (s *Storage) deleteClosedPositions() {
+func (s *positionStorage) deleteClosedPositions() {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 	for k, p := range s.list {

@@ -1,4 +1,4 @@
-package fnmposition
+package fnmbroker
 
 import (
 	"testing"
@@ -29,7 +29,7 @@ func Test_currentPosition_Close(t *testing.T) {
 	assert.NoError(t, err)
 
 	closed := make(chan trengin.Position, 1)
-	currentPosition := Position{
+	currentPosition := finamPosition{
 		position:     pos,
 		stopLossID:   2,
 		takeProfitID: 3,
@@ -45,6 +45,6 @@ func Test_currentPosition_Close(t *testing.T) {
 		assert.Equal(t, 123.45, pos.ClosePrice)
 		assert.Equal(t, now, pos.CloseTime)
 	default:
-		t.Fatal("Position not send")
+		t.Fatal("finamPosition not send")
 	}
 }

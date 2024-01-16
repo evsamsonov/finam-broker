@@ -14,9 +14,6 @@ import (
 	"github.com/evsamsonov/FinamTradeGo/v2/tradeapi"
 	"github.com/evsamsonov/trengin/v2"
 	"go.uber.org/zap"
-
-	"github.com/evsamsonov/finam-broker/internal/fnmposition"
-	"github.com/evsamsonov/finam-broker/internal/tradevent"
 )
 
 var _ trengin.Broker = &Finam{}
@@ -32,9 +29,9 @@ type Finam struct {
 	logger                  *zap.Logger
 
 	client             finamclient.IFinamClient
-	positionStorage    *fnmposition.Storage
-	orderTradeListener *tradevent.OrderTradeListener
-	securityStorage    securityStorage
+	positionStorage    *positionStorage
+	orderTradeListener *OrderTradeListener
+	securityProvider   securityProvider
 }
 
 type Option func(*Finam)
@@ -62,7 +59,7 @@ func New(token, clientID string, opts ...Option) *Finam {
 		clientID:                clientID,
 		token:                   token,
 		logger:                  zap.NewNop(),
-		positionStorage:         fnmposition.NewStorage(),
+		positionStorage:         newPositionStorage(),
 		protectiveSpreadPercent: defaultProtectiveSpreadPercent,
 	}
 	for _, opt := range opts {
@@ -137,7 +134,7 @@ func (f *Finam) OpenPosition(
 
 	positionClosed := make(chan trengin.Position, 1)
 	f.positionStorage.Store(
-		fnmposition.NewPosition(position, security, stopLossID, takeProfitID, positionClosed),
+		newFinamPosition(position, security, stopLossID, takeProfitID, positionClosed),
 	)
 
 	return *position, positionClosed, nil
@@ -175,8 +172,9 @@ func (f *Finam) openMarketOrder(
 		SecurityCode:  security.Code,
 		BuySell:       f.buySell(positionType),
 		Quantity:      int32(quantity),
-		UseCredit:     true, // todo price with protection spread?
-		Property:      tradeapi.OrderProperty_ORDER_PROPERTY_PUT_IN_QUEUE,
+		// todo price with protection spread?
+		UseCredit: true,
+		Property:  tradeapi.OrderProperty_ORDER_PROPERTY_PUT_IN_QUEUE,
 	}
 	orderResult, err := f.client.NewOrder(req)
 	if err != nil {
@@ -272,7 +270,10 @@ func (f *Finam) setTakeProfit(
 		BuySell:       f.buySell(position.Type.Inverse()),
 		TakeProfit: &tradeapi.TakeProfit{
 			ActivationPrice: f.round(takeProfit, security.Decimals),
-			MarketPrice:     true,
+			SpreadPrice: &tradeapi.StopPrice{
+				Value: f.protectiveSpreadPercent,
+				Units: tradeapi.StopPriceUnits_STOP_PRICE_UNITS_PERCENT,
+			},
 			Quantity: &tradeapi.StopQuantity{
 				Value: float64(position.Quantity),
 				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,

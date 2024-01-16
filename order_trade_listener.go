@@ -2,6 +2,7 @@ package fnmbroker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -43,12 +44,9 @@ func (e *OrderTradeListener) Run(ctx context.Context) error {
 
 		if err := e.run(ctx); err != nil {
 			e.logger.Error("Failed to subscribe. Recreate finam client...", zap.Error(err))
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
 		}
 	}
 }
