@@ -76,15 +76,14 @@ func (f *Finam) Run(ctx context.Context) error {
 	}
 	f.client = finamClient
 
-	securities, err := f.client.GetSecurities()
+	f.securityProvider, err = newSecurityProvider(finamClient, f.logger)
 	if err != nil {
 		return fmt.Errorf("get securities: %w", err)
 	}
-	f.securityStorage = newSecurityStorage(securities.GetSecurities())
 
-	f.orderTradeListener = tradevent.NewOrderTradeListener(
-		finamClient,
+	f.orderTradeListener = NewOrderTradeListener(
 		f.clientID,
+		f.token,
 		f.logger,
 	)
 	if err := f.orderTradeListener.Run(ctx); err != nil {
@@ -100,7 +99,7 @@ func (f *Finam) OpenPosition(
 	ctx context.Context,
 	action trengin.OpenPositionAction,
 ) (trengin.Position, trengin.PositionClosed, error) {
-	security, err := f.securityStorage.Get(action.SecurityBoard, action.SecurityCode)
+	security, err := f.securityProvider.Get(action.SecurityBoard, action.SecurityCode)
 	if err != nil {
 		return trengin.Position{}, nil, fmt.Errorf("get security: %w", err)
 	}
