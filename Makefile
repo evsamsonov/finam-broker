@@ -13,7 +13,7 @@ lint: ## Run golang lint using docker
  		-v ${PWD}:/app \
  		-w /app \
 	    golangci/golangci-lint:v1.55.2 \
-	    golangci-lint run -v --modules-download-mode=readonly
+	    golangci-lint run -v --modules-download-mode=readonly --fix
 
 test: ## Run tests
 	GOARCH=amd64 go test -gcflags='-N -l' ./...
