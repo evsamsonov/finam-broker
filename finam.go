@@ -10,6 +10,8 @@ import (
 	"math"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	finamclient "github.com/evsamsonov/FinamTradeGo/v2"
 	"github.com/evsamsonov/FinamTradeGo/v2/tradeapi"
 	"github.com/evsamsonov/trengin/v2"
@@ -20,6 +22,7 @@ var _ trengin.Broker = &Finam{}
 
 const (
 	defaultProtectiveSpreadPercent = 1
+	defaultUseCredit               = true
 )
 
 type Finam struct {
@@ -54,7 +57,7 @@ func WithProtectiveSpreadPercent(protectiveSpread float64) Option {
 }
 
 // WithUseCredit returns Option which sets using credit funds for executing orders.
-// The default is not use credit
+// The default value is true
 func WithUseCredit(useCredit bool) Option {
 	return func(f *Finam) {
 		f.useCredit = useCredit
@@ -71,6 +74,7 @@ func New(token, clientID string, opts ...Option) *Finam {
 		logger:                  zap.NewNop(),
 		positionStorage:         newPositionStorage(),
 		protectiveSpreadPercent: defaultProtectiveSpreadPercent,
+		useCredit:               defaultUseCredit,
 	}
 	for _, opt := range opts {
 		opt(finam)
@@ -96,11 +100,23 @@ func (f *Finam) Run(ctx context.Context) error {
 		f.token,
 		f.logger,
 	)
-	if err := f.orderTradeListener.Run(ctx); err != nil {
-		return fmt.Errorf("order trade listener: %w", err)
-	}
 
-	return ctx.Err()
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		if err := f.orderTradeListener.Run(ctx); err != nil {
+			return fmt.Errorf("order trade listener: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		if err := f.trackOpenPosition(ctx); err != nil {
+			return fmt.Errorf("track open position: %w", err)
+		}
+		return nil
+	})
+
+	return g.Wait()
 }
 
 // OpenPosition
@@ -195,11 +211,8 @@ func (f *Finam) ClosePosition(
 	}
 	defer unlockPosition()
 
-	if _, err := f.client.CancelStop(fnmPosition.StopLossID()); err != nil {
-		return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
-	}
-	if _, err := f.client.CancelStop(fnmPosition.TakeProfitID()); err != nil {
-		return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+	if err := f.cancelStopOrders(fnmPosition); err != nil {
+		return trengin.Position{}, fmt.Errorf("cancel stop orders: %w", err)
 	}
 
 	security := fnmPosition.Security()
@@ -216,6 +229,87 @@ func (f *Finam) ClosePosition(
 
 	f.logger.Info("Position was closed", zap.Any("fnmPosition", fnmPosition))
 	return fnmPosition.Position(), nil
+}
+
+func (f *Finam) trackOpenPosition(ctx context.Context) error {
+	orders, trades, unsubscribe := f.orderTradeListener.Subscribe()
+	defer unsubscribe()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-orders:
+			continue
+		case trade := <-trades:
+			if err := f.processTrade(ctx, trade); err != nil {
+				return fmt.Errorf("process trade: %w", err)
+			}
+		}
+	}
+}
+
+func (f *Finam) processTrade(ctx context.Context, trade *tradeapi.TradeEvent) error {
+	return f.positionStorage.ForEach(func(fnmPosition *finamPosition) error {
+		position := fnmPosition.Position()
+		if trade.SecurityCode != position.SecurityCode { //todo что делать с board?
+			return nil
+		}
+		longClosed := position.IsLong() && trade.GetBuySell() == tradeapi.BuySell_BUY_SELL_SELL
+		shortClosed := position.IsShort() && trade.GetBuySell() == tradeapi.BuySell_BUY_SELL_BUY
+		if !longClosed && !shortClosed {
+			return nil
+		}
+
+		stopOrderExecuted, err := f.stopOrderExecuted(ctx, fnmPosition)
+		if err != nil {
+			return fmt.Errorf("conditional orders found: %w", err)
+		}
+		if !stopOrderExecuted {
+			return nil
+		}
+
+		logger := f.logger.With(zap.Any("position", position))
+		fnmPosition.AddOrderTrade(trade)
+
+		var executedQuantity int64
+		for _, trade := range fnmPosition.Trades() {
+			executedQuantity += trade.GetQuantity() / int64(fnmPosition.Security().LotSize)
+		}
+		if executedQuantity < position.Quantity {
+			logger.Info("Position partially closed", zap.Any("executedQuantity", executedQuantity))
+			return nil
+		}
+
+		if err := f.cancelStopOrders(fnmPosition); err != nil {
+			return fmt.Errorf("cancel stop orders: %w", err)
+		}
+
+		fnmPosition.AddCommission(trade.Commission)
+		if err := fnmPosition.Close(trade.Price); err != nil {
+			if errors.Is(err, trengin.ErrAlreadyClosed) {
+				logger.Info("Position already closed")
+				return nil
+			}
+			return fmt.Errorf("close: %w", err)
+		}
+		logger.Info("Position was closed by order trades", zap.Any("trades", fnmPosition.Trades()))
+		return nil
+	})
+}
+
+func (f *Finam) stopOrderExecuted(ctx context.Context, position *finamPosition) (bool, error) {
+	result, err := f.client.GetStops(true, false, false)
+	if err != nil {
+		return false, fmt.Errorf("get stops: %w", err)
+	}
+
+	for _, stop := range result.GetStops() {
+		if stop.StopId == position.stopLossID || stop.StopId == position.takeProfitID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Return openPrice, commission
@@ -357,4 +451,15 @@ func (f *Finam) addProtectiveSpread(positionType trengin.PositionType, price flo
 
 func (f *Finam) round(val float64, decimals int32) float64 {
 	return math.Round(val*math.Pow10(int(decimals))) / math.Pow10(int(decimals))
+}
+
+func (f *Finam) cancelStopOrders(position *finamPosition) error {
+	// todo если стоп заявка уже отменена?
+	if _, err := f.client.CancelStop(position.StopLossID()); err != nil {
+		return fmt.Errorf("cancel stop loss: %w", err)
+	}
+	if _, err := f.client.CancelStop(position.TakeProfitID()); err != nil {
+		return fmt.Errorf("cancel take profit: %w", err)
+	}
+	return nil
 }

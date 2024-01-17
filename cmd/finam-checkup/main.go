@@ -177,7 +177,7 @@ func (t *Checkuper) CheckUp(params CheckUpArgs) error {
 			return fmt.Errorf("open position: %w", err)
 		}
 		fmt.Printf(
-			"finamPosition was opened. Open price: %f, stop loss: %f, take profit: %f, commission: %f\n",
+			"Position was opened. Open price: %f, stop loss: %f, take profit: %f, commission: %f\n",
 			position.OpenPrice,
 			position.StopLoss,
 			position.TakeProfit,
@@ -190,7 +190,7 @@ func (t *Checkuper) CheckUp(params CheckUpArgs) error {
 				return nil
 			case pos := <-positionClosed:
 				fmt.Printf(
-					"finamPosition was closed. Conditional orders was removed. "+
+					"Position was closed. Conditional orders was removed. "+
 						"Close price: %f, profit: %f, commission: %f\n",
 					pos.ClosePrice,
 					pos.Profit(),

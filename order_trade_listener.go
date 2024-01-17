@@ -42,11 +42,15 @@ func (e *orderTradeListener) Run(ctx context.Context) error {
 			return fmt.Errorf("new finam client: %w", err)
 		}
 
+		// todo нужно различать ошибки, чтобы не рестартить постоянно
+		// todo или добавить таймаут
+
 		if err := e.run(ctx); err != nil {
-			e.logger.Error("Failed to subscribe. Recreate finam client...", zap.Error(err))
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
+
+			e.logger.Error("Failed to subscribe. Recreate finam client...", zap.Error(err))
 		}
 	}
 }
@@ -59,7 +63,7 @@ func (e *orderTradeListener) run(ctx context.Context) error {
 		IncludeOrders: true,
 		ClientIds:     []string{e.clientID},
 	})
-	defer e.close(requestID)
+	//defer e.close(requestID) // todo fix it
 
 	errChan := e.client.GetErrorChan()
 	orderChan := e.client.GetOrderChan()

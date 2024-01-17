@@ -65,7 +65,7 @@ func (s *positionStorage) ForEach(f func(pos *finamPosition) error) error {
 			return nil
 		}
 		if err := f(pos); err != nil {
-			pos.mtx.Unlock()
+			// pos.mtx.Unlock() // todo fix it in tinkoff
 			return err
 		}
 		return nil

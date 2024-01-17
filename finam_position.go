@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/evsamsonov/FinamTradeGo/v2/tradeapi"
-
 	"github.com/evsamsonov/trengin/v2"
 )
 
@@ -16,6 +15,7 @@ type finamPosition struct {
 	stopLossID   int32
 	takeProfitID int32
 	security     *tradeapi.Security
+	trades       []*tradeapi.TradeEvent
 }
 
 func newFinamPosition(
@@ -48,6 +48,10 @@ func (p *finamPosition) AddCommission(val float64) {
 	p.position.AddCommission(val)
 }
 
+func (p *finamPosition) AddOrderTrade(trade *tradeapi.TradeEvent) {
+	p.trades = append(p.trades, trade)
+}
+
 func (p *finamPosition) StopLossID() int32 {
 	return p.stopLossID
 }
@@ -62,6 +66,12 @@ func (p *finamPosition) Security() *tradeapi.Security {
 
 func (p *finamPosition) Position() trengin.Position {
 	return *p.position
+}
+
+func (p *finamPosition) Trades() []*tradeapi.TradeEvent {
+	result := make([]*tradeapi.TradeEvent, len(p.trades))
+	copy(result, p.trades)
+	return result
 }
 
 func (p *finamPosition) Close(closePrice float64) error {
