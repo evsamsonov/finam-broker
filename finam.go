@@ -141,24 +141,20 @@ func (f *Finam) OpenPosition(
 	}
 	position.AddCommission(commission)
 
-	var stopLossID, takeProfitID int32
+	var stopLoss, takeProfit float64
 	if action.StopLossOffset != 0 {
-		stopLoss := openPrice - action.StopLossOffset*action.Type.Multiplier()
-		stopLossID, err = f.setStopLoss(security, stopLoss, *position)
-		if err != nil {
-			return trengin.Position{}, nil, fmt.Errorf("set stop loss: %w", err)
-		}
+		stopLoss = openPrice - action.StopLossOffset*action.Type.Multiplier()
 	}
 	if action.TakeProfitOffset != 0 {
-		takeProfit := openPrice + action.TakeProfitOffset*action.Type.Multiplier()
-		takeProfitID, err = f.setTakeProfit(security, takeProfit, *position)
-		if err != nil {
-			return trengin.Position{}, nil, fmt.Errorf("set take profit: %w", err)
-		}
+		takeProfit = openPrice + action.TakeProfitOffset*action.Type.Multiplier()
+	}
+	stopID, err := f.setStop(security, stopLoss, takeProfit, *position)
+	if err != nil {
+		return trengin.Position{}, nil, fmt.Errorf("set stop: %w", err)
 	}
 
 	positionClosed := make(chan trengin.Position, 1)
-	fnmPosition := newFinamPosition(position, security, stopLossID, takeProfitID, positionClosed)
+	fnmPosition := newFinamPosition(position, security, stopID, positionClosed)
 	f.positionStorage.Store(fnmPosition)
 
 	return *position, positionClosed, nil
@@ -174,31 +170,21 @@ func (f *Finam) ChangeConditionalOrder(
 	}
 	defer unlockPosition()
 
-	if action.StopLoss != 0 {
-		if _, err := f.client.CancelStop(fnmPosition.StopLossID()); err != nil {
-			return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
-		}
-
-		stopLossID, err := f.setStopLoss(fnmPosition.Security(), action.StopLoss, fnmPosition.Position())
-		if err != nil {
-			return trengin.Position{}, fmt.Errorf("set stop loss: %w", err)
-		}
-		fnmPosition.SetStopLoss(stopLossID, action.StopLoss)
+	if action.StopLoss == 0 && action.TakeProfit == 0 {
+		return fnmPosition.Position(), nil
 	}
 
-	if action.TakeProfit != 0 {
-		if _, err := f.client.CancelStop(fnmPosition.TakeProfitID()); err != nil {
-			return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
-		}
-
-		takeProfitID, err := f.setTakeProfit(fnmPosition.Security(), action.TakeProfit, fnmPosition.Position())
-		if err != nil {
-			return trengin.Position{}, fmt.Errorf("set take profit: %w", err)
-		}
-		fnmPosition.SetTakeProfitID(takeProfitID, action.TakeProfit)
+	if _, err := f.client.CancelStop(fnmPosition.StopID()); err != nil {
+		return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
 	}
+
+	stopID, err := f.setStop(fnmPosition.Security(), action.StopLoss, action.TakeProfit, fnmPosition.Position())
+	if err != nil {
+		return trengin.Position{}, err
+	}
+	fnmPosition.SetStop(stopID, action.StopLoss, action.TakeProfit)
+
 	return fnmPosition.Position(), nil
-
 }
 
 func (f *Finam) ClosePosition(
@@ -211,8 +197,8 @@ func (f *Finam) ClosePosition(
 	}
 	defer unlockPosition()
 
-	if err := f.cancelStopOrders(fnmPosition); err != nil {
-		return trengin.Position{}, fmt.Errorf("cancel stop orders: %w", err)
+	if _, err := f.client.CancelStop(fnmPosition.StopID()); err != nil {
+		return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
 	}
 
 	security := fnmPosition.Security()
@@ -261,9 +247,9 @@ func (f *Finam) processTrade(ctx context.Context, trade *tradeapi.TradeEvent) er
 			return nil
 		}
 
-		stopOrderExecuted, err := f.stopOrderExecuted(ctx, fnmPosition)
+		stopOrderExecuted, err := f.stopOrderExecuted(fnmPosition)
 		if err != nil {
-			return fmt.Errorf("conditional orders found: %w", err)
+			return fmt.Errorf("stop order executed: %w", err)
 		}
 		if !stopOrderExecuted {
 			return nil
@@ -281,10 +267,6 @@ func (f *Finam) processTrade(ctx context.Context, trade *tradeapi.TradeEvent) er
 			return nil
 		}
 
-		if err := f.cancelStopOrders(fnmPosition); err != nil {
-			return fmt.Errorf("cancel stop orders: %w", err)
-		}
-
 		fnmPosition.AddCommission(trade.Commission)
 		if err := fnmPosition.Close(trade.Price); err != nil {
 			if errors.Is(err, trengin.ErrAlreadyClosed) {
@@ -298,14 +280,14 @@ func (f *Finam) processTrade(ctx context.Context, trade *tradeapi.TradeEvent) er
 	})
 }
 
-func (f *Finam) stopOrderExecuted(ctx context.Context, position *finamPosition) (bool, error) {
+func (f *Finam) stopOrderExecuted(position *finamPosition) (bool, error) {
 	result, err := f.client.GetStops(true, false, false)
 	if err != nil {
 		return false, fmt.Errorf("get stops: %w", err)
 	}
 
 	for _, stop := range result.GetStops() {
-		if stop.StopId == position.stopLossID || stop.StopId == position.takeProfitID {
+		if stop.StopId == position.stopID {
 			return true, nil
 		}
 	}
@@ -387,6 +369,57 @@ func (f *Finam) buySell(positionType trengin.PositionType) tradeapi.BuySell {
 	return tradeapi.BuySell_BUY_SELL_BUY
 }
 
+func (f *Finam) setStop(
+	security *tradeapi.Security,
+	stopLossPrice float64,
+	takeProfitPrice float64,
+	position trengin.Position,
+) (int32, error) {
+	var stopLoss *tradeapi.StopLoss
+	if stopLossPrice != 0 {
+		orderPrice := f.addProtectiveSpread(position.Type, stopLossPrice)
+		stopLoss = &tradeapi.StopLoss{
+			ActivationPrice: f.round(stopLossPrice, security.Decimals),
+			Price:           f.round(orderPrice, security.Decimals),
+			Quantity: &tradeapi.StopQuantity{
+				Value: float64(position.Quantity),
+				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
+			},
+			UseCredit: f.useCredit,
+		}
+	}
+
+	var takeProfit *tradeapi.TakeProfit
+	if takeProfitPrice != 0 {
+		takeProfit = &tradeapi.TakeProfit{
+			ActivationPrice: f.round(takeProfitPrice, security.Decimals),
+			SpreadPrice: &tradeapi.StopPrice{
+				Value: f.protectiveSpreadPercent,
+				Units: tradeapi.StopPriceUnits_STOP_PRICE_UNITS_PERCENT,
+			},
+			Quantity: &tradeapi.StopQuantity{
+				Value: float64(position.Quantity),
+				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
+			},
+			UseCredit: f.useCredit,
+		}
+	}
+
+	stopResult, err := f.client.NewStop(&tradeapi.NewStopRequest{
+		ClientId:      f.clientID,
+		SecurityBoard: security.Board,
+		SecurityCode:  security.Code,
+		BuySell:       f.buySell(position.Type.Inverse()),
+		StopLoss:      stopLoss,
+		TakeProfit:    takeProfit,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("new stop: %w", err)
+	}
+
+	return stopResult.StopId, nil
+}
+
 func (f *Finam) setStopLoss(
 	security *tradeapi.Security,
 	stopLoss float64,
@@ -453,13 +486,9 @@ func (f *Finam) round(val float64, decimals int32) float64 {
 	return math.Round(val*math.Pow10(int(decimals))) / math.Pow10(int(decimals))
 }
 
-func (f *Finam) cancelStopOrders(position *finamPosition) error {
-	// todo если стоп заявка уже отменена?
-	if _, err := f.client.CancelStop(position.StopLossID()); err != nil {
+func (f *Finam) cancelStop(position *finamPosition) error {
+	if _, err := f.client.CancelStop(position.StopID()); err != nil {
 		return fmt.Errorf("cancel stop loss: %w", err)
-	}
-	if _, err := f.client.CancelStop(position.TakeProfitID()); err != nil {
-		return fmt.Errorf("cancel take profit: %w", err)
 	}
 	return nil
 }

@@ -9,38 +9,31 @@ import (
 )
 
 type finamPosition struct {
-	mtx          sync.Mutex
-	position     *trengin.Position
-	closed       chan trengin.Position
-	stopLossID   int32
-	takeProfitID int32
-	security     *tradeapi.Security
-	trades       []*tradeapi.TradeEvent
+	mtx      sync.Mutex
+	position *trengin.Position
+	closed   chan trengin.Position
+	stopID   int32
+	security *tradeapi.Security
+	trades   []*tradeapi.TradeEvent
 }
 
 func newFinamPosition(
 	pos *trengin.Position,
 	security *tradeapi.Security,
-	stopLossID int32,
-	takeProfitID int32,
+	stopID int32,
 	closed chan trengin.Position,
 ) *finamPosition {
 	return &finamPosition{
-		position:     pos,
-		stopLossID:   stopLossID,
-		takeProfitID: takeProfitID,
-		closed:       closed,
-		security:     security,
+		position: pos,
+		stopID:   stopID,
+		closed:   closed,
+		security: security,
 	}
 }
 
-func (p *finamPosition) SetStopLoss(id int32, stopLoss float64) {
-	p.stopLossID = id
+func (p *finamPosition) SetStop(id int32, stopLoss, takeProfit float64) {
+	p.stopID = id
 	p.position.StopLoss = stopLoss
-}
-
-func (p *finamPosition) SetTakeProfitID(id int32, takeProfit float64) {
-	p.takeProfitID = id
 	p.position.TakeProfit = takeProfit
 }
 
@@ -52,12 +45,8 @@ func (p *finamPosition) AddOrderTrade(trade *tradeapi.TradeEvent) {
 	p.trades = append(p.trades, trade)
 }
 
-func (p *finamPosition) StopLossID() int32 {
-	return p.stopLossID
-}
-
-func (p *finamPosition) TakeProfitID() int32 {
-	return p.takeProfitID
+func (p *finamPosition) StopID() int32 {
+	return p.stopID
 }
 
 func (p *finamPosition) Security() *tradeapi.Security {
@@ -79,6 +68,6 @@ func (p *finamPosition) Close(closePrice float64) error {
 		return err
 	}
 	p.closed <- *p.position
-	p.stopLossID, p.takeProfitID = 0, 0
+	p.stopID = 0
 	return nil
 }
