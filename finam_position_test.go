@@ -4,10 +4,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/evsamsonov/trengin/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/undefinedlabs/go-mpatch"
-
-	"github.com/evsamsonov/trengin/v2"
 )
 
 func Test_currentPosition_Close(t *testing.T) {

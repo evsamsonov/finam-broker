@@ -9,22 +9,23 @@ import (
 )
 
 type finamPosition struct {
-	mtx      sync.Mutex
 	position *trengin.Position
-	closed   chan trengin.Position
-	stopID   int32
 	security *tradeapi.Security
-	trades   []*tradeapi.TradeEvent
+	stopID   int32
+	closed   chan trengin.Position
+
+	mu     sync.Mutex
+	trades []*tradeapi.TradeEvent
 }
 
 func newFinamPosition(
-	pos *trengin.Position,
+	position *trengin.Position,
 	security *tradeapi.Security,
 	stopID int32,
 	closed chan trengin.Position,
 ) *finamPosition {
 	return &finamPosition{
-		position: pos,
+		position: position,
 		stopID:   stopID,
 		closed:   closed,
 		security: security,

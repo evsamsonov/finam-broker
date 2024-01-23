@@ -10,12 +10,11 @@ import (
 	"math"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	finamclient "github.com/evsamsonov/FinamTradeGo/v2"
 	"github.com/evsamsonov/FinamTradeGo/v2/tradeapi"
 	"github.com/evsamsonov/trengin/v2"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 var _ trengin.Broker = &Finam{}
@@ -25,17 +24,25 @@ const (
 	defaultUseCredit               = true
 )
 
-type Finam struct {
-	clientID string
-	token    string
-	logger   *zap.Logger
+// todo
+// 1. использовать защитный спред при открытии позиции
+// 2. возможность указать путь, куда писать файл с security
+// 3. избавится от todo
+// 4. написать тесты
+// 5. документация, где необходимо
+// 6. возможность задать процент комиссии на уровне конфигурации (или подсунуть колбек для рассчета)
 
-	client                  finamclient.IFinamClient
-	positionStorage         *positionStorage
-	orderTradeListener      *orderTradeListener
-	securityProvider        securityProvider
+type Finam struct {
+	clientID                string
+	token                   string
+	logger                  *zap.Logger
 	protectiveSpreadPercent float64
 	useCredit               bool
+
+	client             finamclient.IFinamClient
+	positionStorage    *positionStorage
+	orderTradeListener *orderTradeListener
+	securityProvider   securityProvider
 }
 
 type Option func(*Finam)
@@ -49,7 +56,6 @@ func WithLogger(logger *zap.Logger) Option {
 
 // WithProtectiveSpreadPercent returns Option which sets protective spread
 // in percent for executing orders. The default value is 1%
-// todo использовать при открытии позиции
 func WithProtectiveSpreadPercent(protectiveSpread float64) Option {
 	return func(f *Finam) {
 		f.protectiveSpreadPercent = protectiveSpread
@@ -84,22 +90,18 @@ func New(token, clientID string, opts ...Option) *Finam {
 
 // Run creates Finam client and starts to track an open positions
 func (f *Finam) Run(ctx context.Context) error {
-	finamClient, err := finamclient.NewFinamClient(f.clientID, f.token, ctx)
+	var err error
+	f.client, err = finamclient.NewFinamClient(f.clientID, f.token, ctx)
 	if err != nil {
 		return fmt.Errorf("new finam client: %w", err)
 	}
-	f.client = finamClient
 
-	f.securityProvider, err = newSecurityProvider(finamClient, f.logger)
+	f.securityProvider, err = newSecurityProvider(f.client, f.logger)
 	if err != nil {
 		return fmt.Errorf("get securities: %w", err)
 	}
 
-	f.orderTradeListener = newOrderTradeListener(
-		f.clientID,
-		f.token,
-		f.logger,
-	)
+	f.orderTradeListener = newOrderTradeListener(f.clientID, f.token, f.logger)
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -341,6 +343,7 @@ func (f *Finam) waitTrade(
 		case <-time.After(15 * time.Second):
 			return nil, errors.New("trade wait timeout")
 		case o := <-orders:
+			// Find orderNo by transactionID
 			if orderNo != 0 {
 				continue
 			}
@@ -352,12 +355,14 @@ func (f *Finam) waitTrade(
 			}
 			orderNo = o.OrderNo
 		case trade := <-trades:
+			// Find trade by orderNo
 			if orderNo == 0 {
 				continue
 			}
-			if trade.OrderNo == orderNo {
-				return trade, nil
+			if trade.OrderNo != orderNo {
+				continue
 			}
+			return trade, nil
 		}
 	}
 }

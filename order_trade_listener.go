@@ -13,7 +13,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const sendTimeout = 5 * time.Second
+const (
+	orderTradeSendTimeout              = 5 * time.Second
+	orderTradeKeepAliveTimeout         = 1 * time.Minute
+	orderTradeSubscriptionRetryTimeout = 5 * time.Second
+)
 
 type orderTradeListener struct {
 	clientID string
@@ -34,152 +38,130 @@ func newOrderTradeListener(clientID, token string, logger *zap.Logger) *orderTra
 	}
 }
 
-func (e *orderTradeListener) Run(ctx context.Context) error {
+func (o *orderTradeListener) Run(ctx context.Context) error {
 	for {
 		var err error
-		e.client, err = finamclient.NewFinamClient(e.clientID, e.token, ctx)
+		o.client, err = finamclient.NewFinamClient(o.clientID, o.token, ctx)
 		if err != nil {
 			return fmt.Errorf("new finam client: %w", err)
 		}
 
-		// todo нужно различать ошибки, чтобы не рестартить постоянно
-		// todo или добавить таймаут
-
-		if err := e.run(ctx); err != nil {
+		if err := o.run(ctx); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
+			o.logger.Error(
+				"Failed to read order trade. Recreate finam client and subscribe again...",
+				zap.Error(err),
+			)
 
-			e.logger.Error("Failed to subscribe. Recreate finam client...", zap.Error(err))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(orderTradeSubscriptionRetryTimeout):
+			}
 		}
 	}
 }
 
-func (e *orderTradeListener) run(ctx context.Context) error {
+func (o *orderTradeListener) run(ctx context.Context) error {
 	requestID := uuid.New().String()[:16]
-	go e.client.SubscribeOrderTrade(&tradeapi.OrderTradeSubscribeRequest{
+	go o.client.SubscribeOrderTrade(&tradeapi.OrderTradeSubscribeRequest{
 		RequestId:     requestID,
 		IncludeTrades: true,
 		IncludeOrders: true,
-		ClientIds:     []string{e.clientID},
+		ClientIds:     []string{o.clientID},
 	})
-	// defer e.close(requestID) // todo fix it
 
-	errChan := e.client.GetErrorChan()
-	orderChan := e.client.GetOrderChan()
-	orderTradeChan := e.client.GetOrderTradeChan()
+	errChan := o.client.GetErrorChan()
+	orderChan := o.client.GetOrderChan()
+	orderTradeChan := o.client.GetOrderTradeChan()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-errChan:
 			return fmt.Errorf("subscribe order trade: %w", err)
-		case <-time.After(1 * time.Minute):
-			resp := e.client.SubscribeKeepAlive(&tradeapi.KeepAliveRequest{
+		case <-time.After(orderTradeKeepAliveTimeout):
+			resp := o.client.SubscribeKeepAlive(&tradeapi.KeepAliveRequest{
 				RequestId: uuid.New().String()[:16],
 			})
 			if !resp.Success {
-				e.logger.Error("Failed to send keep alive", zap.Any("resp", resp))
+				o.logger.Error("Failed to send keep alive", zap.Any("resp", resp))
 				continue
 			}
-			e.logger.Debug("Keep alive response", zap.Any("resp", resp))
+			o.logger.Debug("Keep alive response", zap.Any("resp", resp))
 		case order := <-orderChan:
-			if order == nil {
-				e.logger.Debug("Nil order received")
-				continue
-			}
-			e.logger.Debug("Order received", zap.Any("orders", order))
+			o.logger.Debug("Order received", zap.Any("orders", order))
 
-			e.sendOrders(ctx, order)
+			o.sendOrders(ctx, order)
 		case trade := <-orderTradeChan:
-			if trade == nil {
-				e.logger.Debug("Nil trade received")
-				continue
-			}
-			e.logger.Debug("Trade received", zap.Any("orderTrade", trade))
+			o.logger.Debug("Trade received", zap.Any("orderTrade", trade))
 
-			e.sendTrades(ctx, trade)
+			o.sendTrades(ctx, trade)
 		}
 	}
 }
 
 // unsubscribe third argument
-func (e *orderTradeListener) Subscribe() (<-chan *tradeapi.OrderEvent, <-chan *tradeapi.TradeEvent, func()) {
+func (o *orderTradeListener) Subscribe() (<-chan *tradeapi.OrderEvent, <-chan *tradeapi.TradeEvent, func()) {
 	orderChan := make(chan *tradeapi.OrderEvent)
 	tradeChan := make(chan *tradeapi.TradeEvent)
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.orderChans = append(e.orderChans, orderChan)
-	e.tradeChans = append(e.tradeChans, tradeChan)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.orderChans = append(o.orderChans, orderChan)
+	o.tradeChans = append(o.tradeChans, tradeChan)
 
 	return orderChan, tradeChan, func() {
-		e.unsubscribe(orderChan)
+		o.unsubscribe(orderChan)
 	}
 }
 
-func (e *orderTradeListener) sendOrders(ctx context.Context, order *tradeapi.OrderEvent) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+func (o *orderTradeListener) sendOrders(ctx context.Context, order *tradeapi.OrderEvent) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 
-	for _, ch := range e.orderChans {
+	for _, ch := range o.orderChans {
 		go func(ch chan *tradeapi.OrderEvent) {
 			select {
 			case <-ctx.Done():
 				return
 			case ch <- order:
-			case <-time.After(sendTimeout):
-				e.logger.Error("Send order timeout", zap.Any("order", order))
+			case <-time.After(orderTradeSendTimeout):
+				o.logger.Error("Send order timeout", zap.Any("order", order))
 			}
 		}(ch)
 	}
 }
 
-func (e *orderTradeListener) sendTrades(ctx context.Context, trade *tradeapi.TradeEvent) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+func (o *orderTradeListener) sendTrades(ctx context.Context, trade *tradeapi.TradeEvent) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 
-	for _, ch := range e.tradeChans {
+	for _, ch := range o.tradeChans {
 		go func(ch chan *tradeapi.TradeEvent) {
 			select {
 			case <-ctx.Done():
 				return
 			case ch <- trade:
-			case <-time.After(sendTimeout):
-				e.logger.Error("Send trade timeout", zap.Any("trade", trade))
+			case <-time.After(orderTradeSendTimeout):
+				o.logger.Error("Send trade timeout", zap.Any("trade", trade))
 			}
 		}(ch)
 	}
 }
 
-func (e *orderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (o *orderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 
-	for i, ch := range e.orderChans {
+	for i, ch := range o.orderChans {
 		if orderChan != ch {
 			continue
 		}
-		e.orderChans = append(e.orderChans[:i], e.orderChans[i+1:]...)
-		e.tradeChans = append(e.tradeChans[:i], e.tradeChans[i+1:]...)
+		o.orderChans = append(o.orderChans[:i], o.orderChans[i+1:]...)
+		o.tradeChans = append(o.tradeChans[:i], o.tradeChans[i+1:]...)
 		break
 	}
 }
-
-// func (e *orderTradeListener) close(requestID string) { //nolint: unparam
-//	// todo понять почему зависаем
-//	/*resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
-//		RequestId: requestID,
-//	})
-//	if !resp.Success {
-//		e.logger.Error("Failed to unsubscribe order trade", zap.Any("errors", resp.Errors))
-//	}*/
-//
-//	e.mu.Lock()
-//	defer e.mu.Unlock()
-//
-//	for i := 0; i < len(e.orderChans); i++ {
-//		close(e.orderChans[i])
-//		close(e.tradeChans[i])
-//	}
-//}
