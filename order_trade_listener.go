@@ -63,7 +63,7 @@ func (e *orderTradeListener) run(ctx context.Context) error {
 		IncludeOrders: true,
 		ClientIds:     []string{e.clientID},
 	})
-	//defer e.close(requestID) // todo fix it
+	// defer e.close(requestID) // todo fix it
 
 	errChan := e.client.GetErrorChan()
 	orderChan := e.client.GetOrderChan()
@@ -166,20 +166,20 @@ func (e *orderTradeListener) unsubscribe(orderChan <-chan *tradeapi.OrderEvent) 
 	}
 }
 
-func (e *orderTradeListener) close(requestID string) { //nolint: unparam
-	// todo понять почему зависаем
-	/*resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
-		RequestId: requestID,
-	})
-	if !resp.Success {
-		e.logger.Error("Failed to unsubscribe order trade", zap.Any("errors", resp.Errors))
-	}*/
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	for i := 0; i < len(e.orderChans); i++ {
-		close(e.orderChans[i])
-		close(e.tradeChans[i])
-	}
-}
+// func (e *orderTradeListener) close(requestID string) { //nolint: unparam
+//	// todo понять почему зависаем
+//	/*resp := e.client.UnSubscribeOrderTrade(&tradeapi.OrderTradeUnsubscribeRequest{
+//		RequestId: requestID,
+//	})
+//	if !resp.Success {
+//		e.logger.Error("Failed to unsubscribe order trade", zap.Any("errors", resp.Errors))
+//	}*/
+//
+//	e.mu.Lock()
+//	defer e.mu.Unlock()
+//
+//	for i := 0; i < len(e.orderChans); i++ {
+//		close(e.orderChans[i])
+//		close(e.tradeChans[i])
+//	}
+//}

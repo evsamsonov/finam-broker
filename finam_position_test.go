@@ -30,15 +30,13 @@ func Test_currentPosition_Close(t *testing.T) {
 
 	closed := make(chan trengin.Position, 1)
 	currentPosition := finamPosition{
-		position:     pos,
-		stopID:       2,
-		takeProfitID: 3,
-		closed:       closed,
+		position: pos,
+		stopID:   2,
+		closed:   closed,
 	}
 	err = currentPosition.Close(123.45)
 	assert.NoError(t, err)
 	assert.Equal(t, int32(0), currentPosition.StopID())
-	assert.Equal(t, int32(0), currentPosition.TakeProfitID())
 
 	select {
 	case pos := <-closed:

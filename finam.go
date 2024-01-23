@@ -228,17 +228,17 @@ func (f *Finam) trackOpenPosition(ctx context.Context) error {
 		case <-orders:
 			continue
 		case trade := <-trades:
-			if err := f.processTrade(ctx, trade); err != nil {
+			if err := f.processTrade(trade); err != nil {
 				return fmt.Errorf("process trade: %w", err)
 			}
 		}
 	}
 }
 
-func (f *Finam) processTrade(ctx context.Context, trade *tradeapi.TradeEvent) error {
+func (f *Finam) processTrade(trade *tradeapi.TradeEvent) error {
 	return f.positionStorage.ForEach(func(fnmPosition *finamPosition) error {
 		position := fnmPosition.Position()
-		if trade.SecurityCode != position.SecurityCode { //todo что делать с board?
+		if trade.SecurityCode != position.SecurityCode { // todo что делать с board?
 			return nil
 		}
 		longClosed := position.IsLong() && trade.GetBuySell() == tradeapi.BuySell_BUY_SELL_SELL
@@ -420,63 +420,6 @@ func (f *Finam) setStop(
 	return stopResult.StopId, nil
 }
 
-func (f *Finam) setStopLoss(
-	security *tradeapi.Security,
-	stopLoss float64,
-	position trengin.Position,
-) (int32, error) {
-	protectiveSpread := f.addProtectiveSpread(position.Type, stopLoss)
-	stopResult, err := f.client.NewStop(&tradeapi.NewStopRequest{
-		ClientId:      f.clientID,
-		SecurityBoard: security.Board,
-		SecurityCode:  security.Code,
-		BuySell:       f.buySell(position.Type.Inverse()),
-		StopLoss: &tradeapi.StopLoss{
-			ActivationPrice: f.round(stopLoss, security.Decimals),
-			Price:           f.round(protectiveSpread, security.Decimals),
-			Quantity: &tradeapi.StopQuantity{
-				Value: float64(position.Quantity),
-				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
-			},
-			UseCredit: f.useCredit,
-		},
-	})
-	if err != nil {
-		return 0, fmt.Errorf("new stop: %w", err)
-	}
-
-	return stopResult.StopId, nil
-}
-func (f *Finam) setTakeProfit(
-	security *tradeapi.Security,
-	takeProfit float64,
-	position trengin.Position,
-) (int32, error) {
-	stopResult, err := f.client.NewStop(&tradeapi.NewStopRequest{
-		ClientId:      f.clientID,
-		SecurityBoard: security.Board,
-		SecurityCode:  security.Code,
-		BuySell:       f.buySell(position.Type.Inverse()),
-		TakeProfit: &tradeapi.TakeProfit{
-			ActivationPrice: f.round(takeProfit, security.Decimals),
-			SpreadPrice: &tradeapi.StopPrice{
-				Value: f.protectiveSpreadPercent,
-				Units: tradeapi.StopPriceUnits_STOP_PRICE_UNITS_PERCENT,
-			},
-			Quantity: &tradeapi.StopQuantity{
-				Value: float64(position.Quantity),
-				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
-			},
-			UseCredit: f.useCredit,
-		},
-	})
-	if err != nil {
-		return 0, fmt.Errorf("new stop: %w", err)
-	}
-
-	return stopResult.StopId, nil
-}
-
 func (f *Finam) addProtectiveSpread(positionType trengin.PositionType, price float64) float64 {
 	protectiveSpread := price * f.protectiveSpreadPercent / 100
 	return price - positionType.Multiplier()*protectiveSpread
@@ -484,11 +427,4 @@ func (f *Finam) addProtectiveSpread(positionType trengin.PositionType, price flo
 
 func (f *Finam) round(val float64, decimals int32) float64 {
 	return math.Round(val*math.Pow10(int(decimals))) / math.Pow10(int(decimals))
-}
-
-func (f *Finam) cancelStop(position *finamPosition) error {
-	if _, err := f.client.CancelStop(position.StopID()); err != nil {
-		return fmt.Errorf("cancel stop loss: %w", err)
-	}
-	return nil
 }
