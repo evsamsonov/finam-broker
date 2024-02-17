@@ -11,6 +11,7 @@ import (
 	"github.com/evsamsonov/FinamTradeGo/v2/tradeapi"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -24,7 +25,6 @@ type orderTradeListener struct {
 	token    string
 	logger   *zap.Logger
 
-	client     finamclient.IFinamClient
 	mu         sync.RWMutex
 	orderChans []chan *tradeapi.OrderEvent
 	tradeChans []chan *tradeapi.TradeEvent
@@ -39,19 +39,61 @@ func newOrderTradeListener(clientID, token string, logger *zap.Logger) *orderTra
 }
 
 func (o *orderTradeListener) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		defer cancel()
+		o.logger.Debug("Start main subscription")
+
+		return o.run(ctx)
+	})
+
+	// todo why need redundant subscription
+	g.Go(func() error {
+		defer cancel()
+		<-time.After(5 * time.Minute)
+		o.logger.Debug("Start redundant subscription")
+
+		return o.run(ctx)
+	})
+	return g.Wait()
+}
+
+// todo unsubscribe third argument
+func (o *orderTradeListener) Subscribe() (<-chan *tradeapi.OrderEvent, <-chan *tradeapi.TradeEvent, func()) {
+	orderChan := make(chan *tradeapi.OrderEvent)
+	tradeChan := make(chan *tradeapi.TradeEvent)
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.orderChans = append(o.orderChans, orderChan)
+	o.tradeChans = append(o.tradeChans, tradeChan)
+
+	return orderChan, tradeChan, func() {
+		o.unsubscribe(orderChan)
+	}
+}
+
+func (o *orderTradeListener) run(ctx context.Context) error {
 	for {
-		var err error
-		o.client, err = finamclient.NewFinamClient(o.clientID, o.token, ctx)
+		client, err := finamclient.NewFinamClient(o.clientID, o.token, ctx)
 		if err != nil {
-			return fmt.Errorf("new finam client: %w", err)
+			o.logger.Error("Failed to create finam client", zap.Error(err))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(orderTradeSubscriptionRetryTimeout):
+			}
+			continue
 		}
 
-		if err := o.run(ctx); err != nil {
+		if err := o.readOrderTrade(ctx, client); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
 			o.logger.Error(
-				"Failed to read order trade. Recreate finam client and subscribe again...",
+				"Failed to read order trade. Retry",
 				zap.Error(err),
 			)
 
@@ -64,26 +106,26 @@ func (o *orderTradeListener) Run(ctx context.Context) error {
 	}
 }
 
-func (o *orderTradeListener) run(ctx context.Context) error {
+func (o *orderTradeListener) readOrderTrade(ctx context.Context, client finamclient.IFinamClient) error {
 	requestID := uuid.New().String()[:16]
-	go o.client.SubscribeOrderTrade(&tradeapi.OrderTradeSubscribeRequest{
+	go client.SubscribeOrderTrade(&tradeapi.OrderTradeSubscribeRequest{
 		RequestId:     requestID,
 		IncludeTrades: true,
 		IncludeOrders: true,
 		ClientIds:     []string{o.clientID},
 	})
 
-	errChan := o.client.GetErrorChan()
-	orderChan := o.client.GetOrderChan()
-	orderTradeChan := o.client.GetOrderTradeChan()
+	errChan := client.GetErrorChan()
+	orderChan := client.GetOrderChan()
+	orderTradeChan := client.GetOrderTradeChan()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-errChan:
-			return fmt.Errorf("subscribe order trade: %w", err)
+			return fmt.Errorf("read order trade: %w", err)
 		case <-time.After(orderTradeKeepAliveTimeout):
-			resp := o.client.SubscribeKeepAlive(&tradeapi.KeepAliveRequest{
+			resp := client.SubscribeKeepAlive(&tradeapi.KeepAliveRequest{
 				RequestId: uuid.New().String()[:16],
 			})
 			if !resp.Success {
@@ -100,21 +142,6 @@ func (o *orderTradeListener) run(ctx context.Context) error {
 
 			o.sendTrades(ctx, trade)
 		}
-	}
-}
-
-// unsubscribe third argument
-func (o *orderTradeListener) Subscribe() (<-chan *tradeapi.OrderEvent, <-chan *tradeapi.TradeEvent, func()) {
-	orderChan := make(chan *tradeapi.OrderEvent)
-	tradeChan := make(chan *tradeapi.TradeEvent)
-
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.orderChans = append(o.orderChans, orderChan)
-	o.tradeChans = append(o.tradeChans, tradeChan)
-
-	return orderChan, tradeChan, func() {
-		o.unsubscribe(orderChan)
 	}
 }
 
