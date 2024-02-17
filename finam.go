@@ -24,15 +24,8 @@ const (
 	defaultUseCredit               = true
 )
 
-// todo
-// 1. использовать защитный спред при открытии позиции
-// 2. возможность указать путь, куда писать файл с security
-// 3. избавится от todo
-// 4. написать тесты
-// 5. документация, где необходимо
-// 6. возможность задать процент комиссии на уровне конфигурации (или подсунуть колбек для рассчета)
-// 7. проблема wait trade при запуске
-
+// todo документация, где необходимо
+// todo возможность задать процент комиссии на уровне конфигурации (или подсунуть колбек для рассчета)
 type Finam struct {
 	clientID                string
 	token                   string
@@ -312,6 +305,7 @@ func (f *Finam) openMarketOrder(
 	orders, trades, unsubscribe := f.orderTradeListener.Subscribe()
 	defer unsubscribe()
 
+	// todo использовать защитный спред при открытии позиции
 	req := &tradeapi.NewOrderRequest{
 		ClientId:      f.clientID,
 		SecurityBoard: security.Board,

@@ -16,6 +16,7 @@ const securityProviderFile = "securities.json"
 
 type securityProvider map[string]*tradeapi.Security
 
+// todo возможность указать путь, куда писать файл с security
 func newSecurityProvider(client finamclient.IFinamClient, logger *zap.Logger) (securityProvider, error) {
 	s := make(securityProvider)
 
