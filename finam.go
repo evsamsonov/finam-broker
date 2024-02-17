@@ -31,6 +31,7 @@ const (
 // 4. написать тесты
 // 5. документация, где необходимо
 // 6. возможность задать процент комиссии на уровне конфигурации (или подсунуть колбек для рассчета)
+// 7. проблема wait trade при запуске
 
 type Finam struct {
 	clientID                string
@@ -103,8 +104,11 @@ func (f *Finam) Run(ctx context.Context) error {
 
 	f.orderTradeListener = newOrderTradeListener(f.clientID, f.token, f.logger)
 
+	ctx, cancel := context.WithCancel(ctx)
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
+		defer cancel()
+
 		if err := f.orderTradeListener.Run(ctx); err != nil {
 			return fmt.Errorf("order trade listener: %w", err)
 		}
@@ -112,6 +116,8 @@ func (f *Finam) Run(ctx context.Context) error {
 	})
 
 	g.Go(func() error {
+		defer cancel()
+
 		if err := f.trackOpenPosition(ctx); err != nil {
 			return fmt.Errorf("track open position: %w", err)
 		}
