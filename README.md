@@ -7,7 +7,6 @@ for creating automated trading robots.
 - Opens position, changes stop loss and take profit, closes position.
 - Tracks open position.
 - Supports multiple open positions at the same time.
-- Commission in position is approximate.
 
 ## How to use
 
