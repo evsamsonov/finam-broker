@@ -11,8 +11,8 @@ for creating automated trading robots.
 
 ## How to use
 
-Create a new `Tinkoff` object using constructor `New`. Pass [full-access token](https://tinkoff.github.io/investAPI/token/),
-user account identifier, [FIGI](https://tinkoff.github.io/investAPI/faq_identification/) of a trading instrument.
+Create a new `Finam` object using constructor `New`. Pass [full-access token](https://finamweb.github.io/trade-api-docs/tokens),
+client id. 
 
 ```go
 package main
@@ -21,59 +21,54 @@ import (
 	"context"
 	"log"
 
-	tnkbroker "github.com/evsamsonov/tinkoff-broker"
 	"github.com/evsamsonov/trengin/v2"
+	"github.com/evsamsonov/finam-broker"
 )
 
 func main() {
-	tinkoffBroker, err := tnkbroker.New(
-		"tinkoff-token",
+	finamBroker := fnmbroker.New(
+		"token",
 		"123",
-		"BBG004730N88",
 		// options...
 	)
-	if err != nil {
-		log.Fatal("Failed to create tinkoff broker")
-	}
-	
-	tradingEngine := trengin.New(&Strategy{}, tinkoffBroker)
-	if err = tradingEngine.Run(context.Background()); err != nil {
+
+	tradingEngine := trengin.New(&Strategy{}, finamBroker)
+	if err := tradingEngine.Run(context.Background()); err != nil {
 		log.Fatal("Trading engine crashed")
 	}
 }
 
 type Strategy struct{}
-func (s *Strategy) Run(ctx context.Context, actions Actions) error { panic("implement me") }
+func (s *Strategy) Run(ctx context.Context, actions trengin.Actions) error { panic("implement me") }
 ```
 
 See more details in [trengin documentation](http://github.com/evsamsonov/trengin).
 
 ### Option
 
-You can configure `Tinkoff` to use `Option`
+You can configure `Finam` to use `Option`
 
-| Methods                           | Returns Option which                                                             |
-|-----------------------------------|----------------------------------------------------------------------------------|
-| `WithLogger`                      | Sets logger. The default logger is no-op Logger.                                 |
-| `WithAppName`                     | Sets [x-app-name](https://tinkoff.github.io/investAPI/grpc/#appname).            |
-| `WithProtectiveSpread`            | Sets protective spread in percent for executing orders. The default value is 1%. |
-| `WithTradeStreamRetryTimeout`     | Defines retry timeout on trade stream error.                                     |
-| `WithTradeStreamPingWaitDuration` | Defines duration how long we wait for ping before reconnection.                  |
+| Methods                       | Returns Option which                                                             |
+|-------------------------------|----------------------------------------------------------------------------------|
+| `WithLogger`                  | Sets logger. The default logger is no-op Logger.                                 |
+| `WithProtectiveSpreadPercent` | Sets protective spread in percent for executing orders. The default value is 1%. |
+| `WithUseCredit`               | Sets using credit funds for executing orders.                                    |
+| `WithSecurityCacheFile`       | Sets path to securities cache file. Default is `./securities.json`               |
 
 ## Checkup
 
-Use `tinkoff-checkup` for checking the ability to trade with a specific token, instrument and account. 
+Use `finam-checkup` for checking the ability to trade with a specific token and client id. 
 
 ### How to install
 
 ```bash
-go install github.com/evsamsonov/tinkoff-broker/cmd/tinkoff-checkup@latest
+go install github.com/evsamsonov/tinkoff-broker/cmd/finam-checkup@latest
 ```
 
 ### How to use 
 
 ```bash
-tinkoff-checkup [ACCOUNT_ID] [INSTRUMENT_FIGI] [-v]
+finam-checkup [CLIENT_ID] [SECURITY_BOARD] [SECURITY_CODE] [-v]
  ```
 
 | Flag | Description         |
