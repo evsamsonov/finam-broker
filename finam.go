@@ -1,6 +1,7 @@
 // Package fnmbroker implements [trengin.Broker] using [Finam Trade API].
 //
 // [Finam Trade API]: https://finamweb.github.io/trade-api-docs/
+// [trengin.Broker]: https://github.com/evsamsonov/trengin
 package fnmbroker
 
 import (
@@ -22,21 +23,21 @@ var _ trengin.Broker = &Finam{}
 const (
 	defaultProtectiveSpreadPercent = 1
 	defaultUseCredit               = true
+	defaultSecurityCacheFile       = "securities.json"
 )
 
-// todo документация, где необходимо
-// todo возможность задать процент комиссии на уровне конфигурации (или подсунуть колбек для рассчета)
 type Finam struct {
 	clientID                string
 	token                   string
 	logger                  *zap.Logger
 	protectiveSpreadPercent float64
 	useCredit               bool
+	securityCacheFile       string
 
 	client             finamclient.IFinamClient
 	positionStorage    *positionStorage
 	orderTradeListener *orderTradeListener
-	securityProvider   securityProvider
+	securityProvider   *securityProvider
 }
 
 type Option func(*Finam)
@@ -64,6 +65,14 @@ func WithUseCredit(useCredit bool) Option {
 	}
 }
 
+// WithSecurityCacheFile returns Option which sets path to securities cache file.
+// The default value is securities.json in current directory
+func WithSecurityCacheFile(securityCacheFile string) Option {
+	return func(f *Finam) {
+		f.securityCacheFile = securityCacheFile
+	}
+}
+
 // New creates a new Finam object. It takes [full-access token], client id.
 //
 // [full-access token]: https://finamweb.github.io/trade-api-docs/tokens
@@ -75,6 +84,7 @@ func New(token, clientID string, opts ...Option) *Finam {
 		positionStorage:         newPositionStorage(),
 		protectiveSpreadPercent: defaultProtectiveSpreadPercent,
 		useCredit:               defaultUseCredit,
+		securityCacheFile:       defaultSecurityCacheFile,
 	}
 	for _, opt := range opts {
 		opt(finam)
@@ -82,7 +92,7 @@ func New(token, clientID string, opts ...Option) *Finam {
 	return finam
 }
 
-// Run creates Finam client and starts to track an open positions
+// Run initializes required objects and starts to track an open positions
 func (f *Finam) Run(ctx context.Context) error {
 	var err error
 	f.client, err = finamclient.NewFinamClient(f.clientID, f.token, ctx)
@@ -90,7 +100,7 @@ func (f *Finam) Run(ctx context.Context) error {
 		return fmt.Errorf("new finam client: %w", err)
 	}
 
-	f.securityProvider, err = newSecurityProvider(f.client, f.logger)
+	f.securityProvider, err = newSecurityProvider(f.client, f.securityCacheFile, f.logger)
 	if err != nil {
 		return fmt.Errorf("get securities: %w", err)
 	}
