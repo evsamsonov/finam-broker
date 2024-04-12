@@ -49,7 +49,9 @@ func (o *orderTradeListener) Run(ctx context.Context) error {
 		return o.run(ctx)
 	})
 
-	// todo why need redundant subscription
+	// Connection resets after 10 minutes and events may be lost.
+	// Redundant subscription is needed to receive events consistently.
+	// See https://github.com/FinamWeb/trade-api-docs/discussions/21#discussioncomment-8374024
 	g.Go(func() error {
 		defer cancel()
 		<-time.After(5 * time.Minute)
@@ -60,7 +62,8 @@ func (o *orderTradeListener) Run(ctx context.Context) error {
 	return g.Wait()
 }
 
-// todo unsubscribe third argument
+// Subscribe subscribes to order and trade events.
+// Unsubscribe function is third argument
 func (o *orderTradeListener) Subscribe() (<-chan *tradeapi.OrderEvent, <-chan *tradeapi.TradeEvent, func()) {
 	orderChan := make(chan *tradeapi.OrderEvent)
 	tradeChan := make(chan *tradeapi.TradeEvent)

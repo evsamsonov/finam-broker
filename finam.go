@@ -249,7 +249,8 @@ func (f *Finam) trackOpenPosition(ctx context.Context) error {
 func (f *Finam) processTrade(trade *tradeapi.TradeEvent) error {
 	return f.positionStorage.ForEach(func(fnmPosition *finamPosition) error {
 		position := fnmPosition.Position()
-		if trade.SecurityCode != position.SecurityCode { // todo что делать с board?
+		// We check only Security Code. A trade doesn't have Security Board
+		if trade.SecurityCode != position.SecurityCode {
 			return nil
 		}
 		longClosed := position.IsLong() && trade.GetBuySell() == tradeapi.BuySell_BUY_SELL_SELL
@@ -315,7 +316,6 @@ func (f *Finam) openMarketOrder(
 	orders, trades, unsubscribe := f.orderTradeListener.Subscribe()
 	defer unsubscribe()
 
-	// todo использовать защитный спред при открытии позиции
 	req := &tradeapi.NewOrderRequest{
 		ClientId:      f.clientID,
 		SecurityBoard: security.Board,
@@ -335,7 +335,6 @@ func (f *Finam) openMarketOrder(
 		return 0, 0, fmt.Errorf("wait trade: %w", err)
 	}
 	f.logger.Debug("Market order executed", zap.Any("trade", trade))
-	// todo привести комиссию в рублях в доллары
 	return trade.Price, trade.Commission, nil
 }
 

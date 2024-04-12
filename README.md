@@ -61,7 +61,7 @@ Use `finam-checkup` for checking the ability to trade with a specific token and 
 ### How to install
 
 ```bash
-go install github.com/evsamsonov/tinkoff-broker/cmd/finam-checkup@latest
+go install github.com/evsamsonov/finam-broker/cmd/finam-checkup@latest
 ```
 
 ### How to use 
@@ -87,3 +87,10 @@ lint                           Run golang lint using docker
 pre-push                       Run golang lint and test
 test                           Run tests
 ```
+
+### TODO 
+
+- Use protective spread for open position
+- Add commission to position
+- Remove duplicate events in order trade listener 
+- Add unit tests
