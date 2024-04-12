@@ -29,7 +29,7 @@ import (
 	"os"
 	"syscall"
 
-	trengin "github.com/evsamsonov/trengin/v2"
+	"github.com/evsamsonov/trengin/v2"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
