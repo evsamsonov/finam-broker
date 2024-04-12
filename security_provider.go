@@ -20,7 +20,11 @@ type securityProvider struct {
 	securities map[string]*tradeapi.Security
 }
 
-func newSecurityProvider(client finamclient.IFinamClient, cacheFile string, logger *zap.Logger) (*securityProvider, error) {
+func newSecurityProvider(
+	client finamclient.IFinamClient,
+	cacheFile string,
+	logger *zap.Logger,
+) (*securityProvider, error) {
 	s := &securityProvider{
 		client:    client,
 		cacheFile: cacheFile,
