@@ -95,7 +95,7 @@ func (o *orderTradeListener) run(ctx context.Context) error {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
-			o.logger.Error(
+			o.logger.Warn(
 				"Failed to read order trade. Retry",
 				zap.Error(err),
 			)
@@ -153,15 +153,13 @@ func (o *orderTradeListener) sendOrders(ctx context.Context, order *tradeapi.Ord
 	defer o.mu.RUnlock()
 
 	for _, ch := range o.orderChans {
-		go func(ch chan *tradeapi.OrderEvent) {
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- order:
-			case <-time.After(orderTradeSendTimeout):
-				o.logger.Error("Send order timeout", zap.Any("order", order))
-			}
-		}(ch)
+		select {
+		case <-ctx.Done():
+			return
+		case ch <- order:
+		case <-time.After(orderTradeSendTimeout):
+			o.logger.Error("Send order timeout", zap.Any("order", order))
+		}
 	}
 }
 
@@ -170,15 +168,13 @@ func (o *orderTradeListener) sendTrades(ctx context.Context, trade *tradeapi.Tra
 	defer o.mu.RUnlock()
 
 	for _, ch := range o.tradeChans {
-		go func(ch chan *tradeapi.TradeEvent) {
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- trade:
-			case <-time.After(orderTradeSendTimeout):
-				o.logger.Error("Send trade timeout", zap.Any("trade", trade))
-			}
-		}(ch)
+		select {
+		case <-ctx.Done():
+			return
+		case ch <- trade:
+		case <-time.After(orderTradeSendTimeout):
+			o.logger.Error("Send trade timeout", zap.Any("trade", trade))
+		}
 	}
 }
 
