@@ -329,6 +329,7 @@ func (f *Finam) openMarketOrder(
 	if err != nil {
 		return 0, 0, fmt.Errorf("new order: %w", err)
 	}
+	f.logger.Debug("Order created", zap.Any("transactionId", orderResult.TransactionId))
 
 	trade, err := f.waitTrade(ctx, orderResult.TransactionId, trades, orders)
 	if err != nil {
