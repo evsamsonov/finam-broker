@@ -1,6 +1,6 @@
 // Package fnmbroker implements [trengin.Broker] using [Finam Trade API].
 //
-// [Finam Trade API]: https://finamweb.github.io/trade-api-docs/
+// [Finam Trade API]: https://tradeapi.finam.ru/docs/guides/grpc/
 // [trengin.Broker]: https://github.com/evsamsonov/trengin
 package fnmbroker
 
@@ -9,10 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
-	finamclient "github.com/evsamsonov/FinamTradeGo/v2"
-	"github.com/evsamsonov/FinamTradeGo/v2/tradeapi"
+	tradeapi "github.com/FinamWeb/finam-trade-api/go/grpc/tradeapi/v1"
+	"github.com/FinamWeb/finam-trade-api/go/grpc/tradeapi/v1/orders"
 	"github.com/evsamsonov/trengin/v2"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -22,19 +23,19 @@ var _ trengin.Broker = &Finam{}
 
 const (
 	defaultProtectiveSpreadPercent = 1
-	defaultUseCredit               = true
 	defaultSecurityCacheFile       = "securities.json"
+	tradeWaitTimeout               = 15 * time.Second
 )
 
 type Finam struct {
-	clientID                string
+	accountID               string
 	token                   string
+	endpoint                string
 	logger                  *zap.Logger
 	protectiveSpreadPercent float64
-	useCredit               bool
 	securityCacheFile       string
 
-	client             finamclient.IFinamClient
+	client             *finamAPIClient
 	positionStorage    *positionStorage
 	orderTradeListener *orderTradeListener
 	securityProvider   *securityProvider
@@ -42,7 +43,7 @@ type Finam struct {
 
 type Option func(*Finam)
 
-// WithLogger returns Option which sets logger. The default logger is no-op Logger
+// WithLogger returns Option which sets logger. The default logger is no-op Logger.
 func WithLogger(logger *zap.Logger) Option {
 	return func(f *Finam) {
 		f.logger = logger
@@ -50,40 +51,45 @@ func WithLogger(logger *zap.Logger) Option {
 }
 
 // WithProtectiveSpreadPercent returns Option which sets protective spread
-// in percent for executing orders. The default value is 1%
+// in percent for executing orders. The default value is 1%.
 func WithProtectiveSpreadPercent(protectiveSpread float64) Option {
 	return func(f *Finam) {
 		f.protectiveSpreadPercent = protectiveSpread
 	}
 }
 
-// WithUseCredit returns Option which sets using credit funds for executing orders.
-// The default value is true
-func WithUseCredit(useCredit bool) Option {
-	return func(f *Finam) {
-		f.useCredit = useCredit
-	}
+// WithUseCredit is deprecated: Trade API v1 does not expose a use-credit flag.
+// The option is kept for backward compatibility and has no effect.
+func WithUseCredit(_ bool) Option {
+	return func(*Finam) {}
 }
 
 // WithSecurityCacheFile returns Option which sets path to securities cache file.
-// The default value is securities.json in current directory
+// The default value is securities.json in current directory.
 func WithSecurityCacheFile(securityCacheFile string) Option {
 	return func(f *Finam) {
 		f.securityCacheFile = securityCacheFile
 	}
 }
 
-// New creates a new Finam object. It takes [full-access token], client id.
+// WithEndpoint returns Option which sets Finam Trade API gRPC endpoint.
+// The default value is api.finam.ru:443.
+func WithEndpoint(endpoint string) Option {
+	return func(f *Finam) {
+		f.endpoint = endpoint
+	}
+}
+
+// New creates a new Finam object. It takes API secret token and account id.
 //
-// [full-access token]: https://finamweb.github.io/trade-api-docs/tokens
-func New(token, clientID string, opts ...Option) *Finam {
+// [API tokens]: https://tradeapi.finam.ru/docs/tokens/
+func New(token, accountID string, opts ...Option) *Finam {
 	finam := &Finam{
-		clientID:                clientID,
+		accountID:               accountID,
 		token:                   token,
 		logger:                  zap.NewNop(),
 		positionStorage:         newPositionStorage(),
 		protectiveSpreadPercent: defaultProtectiveSpreadPercent,
-		useCredit:               defaultUseCredit,
 		securityCacheFile:       defaultSecurityCacheFile,
 	}
 	for _, opt := range opts {
@@ -92,22 +98,29 @@ func New(token, clientID string, opts ...Option) *Finam {
 	return finam
 }
 
-// Run initializes required objects and starts to track an open positions
+// Run initializes required objects and starts to track open positions.
 func (f *Finam) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var err error
-	f.client, err = finamclient.NewFinamClient(f.clientID, f.token, ctx)
+	f.client, err = newFinamAPIClient(ctx, f.token, f.accountID, f.endpoint, f.logger)
 	if err != nil {
 		return fmt.Errorf("new finam client: %w", err)
 	}
+	defer func() {
+		if closeErr := f.client.close(); closeErr != nil {
+			f.logger.Warn("Failed to close finam client", zap.Error(closeErr))
+		}
+	}()
 
 	f.securityProvider, err = newSecurityProvider(f.client, f.securityCacheFile, f.logger)
 	if err != nil {
 		return fmt.Errorf("get securities: %w", err)
 	}
 
-	f.orderTradeListener = newOrderTradeListener(f.clientID, f.token, f.logger)
+	f.orderTradeListener = newOrderTradeListener(f.client, f.logger)
 
-	ctx, cancel := context.WithCancel(ctx)
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		defer cancel()
@@ -130,18 +143,18 @@ func (f *Finam) Run(ctx context.Context) error {
 	return g.Wait()
 }
 
-// OpenPosition
-// see https://finamweb.github.io/trade-api-docs/grpc/orders
+// OpenPosition opens a market position and optional SL/TP orders.
+// See https://tradeapi.finam.ru/docs/guides/grpc/
 func (f *Finam) OpenPosition(
 	ctx context.Context,
 	action trengin.OpenPositionAction,
 ) (trengin.Position, trengin.PositionClosed, error) {
-	security, err := f.securityProvider.Get(action.SecurityBoard, action.SecurityCode)
+	sec, err := f.securityProvider.Get(ctx, action.SecurityBoard, action.SecurityCode)
 	if err != nil {
 		return trengin.Position{}, nil, fmt.Errorf("get security: %w", err)
 	}
 
-	openPrice, commission, err := f.openMarketOrder(ctx, security, action.Type, action.Quantity)
+	openPrice, err := f.openMarketOrder(ctx, sec, action.Type, action.Quantity)
 	if err != nil {
 		return trengin.Position{}, nil, err
 	}
@@ -150,7 +163,6 @@ func (f *Finam) OpenPosition(
 	if err != nil {
 		return trengin.Position{}, nil, fmt.Errorf("new position: %w", err)
 	}
-	position.AddCommission(commission)
 
 	var stopLoss, takeProfit float64
 	if action.StopLossOffset != 0 {
@@ -159,20 +171,20 @@ func (f *Finam) OpenPosition(
 	if action.TakeProfitOffset != 0 {
 		takeProfit = openPrice + action.TakeProfitOffset*action.Type.Multiplier()
 	}
-	stopID, err := f.setStop(security, stopLoss, takeProfit, *position)
+	stopID, err := f.setStop(ctx, sec, stopLoss, takeProfit, *position)
 	if err != nil {
 		return trengin.Position{}, nil, fmt.Errorf("set stop: %w", err)
 	}
 
 	positionClosed := make(chan trengin.Position, 1)
-	fnmPosition := newFinamPosition(position, security, stopID, positionClosed)
+	fnmPosition := newFinamPosition(position, sec, stopID, positionClosed)
 	f.positionStorage.Store(fnmPosition)
 
 	return *position, positionClosed, nil
 }
 
 func (f *Finam) ChangeConditionalOrder(
-	_ context.Context,
+	ctx context.Context,
 	action trengin.ChangeConditionalOrderAction,
 ) (trengin.Position, error) {
 	fnmPosition, unlockPosition, err := f.positionStorage.Load(action.PositionID)
@@ -185,11 +197,19 @@ func (f *Finam) ChangeConditionalOrder(
 		return fnmPosition.Position(), nil
 	}
 
-	if _, err := f.client.CancelStop(fnmPosition.StopID()); err != nil {
-		return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+	if fnmPosition.StopID() != "" {
+		if err := f.cancelStop(ctx, fnmPosition.StopID()); err != nil {
+			return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+		}
 	}
 
-	stopID, err := f.setStop(fnmPosition.Security(), action.StopLoss, action.TakeProfit, fnmPosition.Position())
+	stopID, err := f.setStop(
+		ctx,
+		fnmPosition.Security(),
+		action.StopLoss,
+		action.TakeProfit,
+		fnmPosition.Position(),
+	)
 	if err != nil {
 		return trengin.Position{}, err
 	}
@@ -208,18 +228,19 @@ func (f *Finam) ClosePosition(
 	}
 	defer unlockPosition()
 
-	if _, err := f.client.CancelStop(fnmPosition.StopID()); err != nil {
-		return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+	if fnmPosition.StopID() != "" {
+		if err := f.cancelStop(ctx, fnmPosition.StopID()); err != nil {
+			return trengin.Position{}, fmt.Errorf("cancel stop: %w", err)
+		}
 	}
 
-	security := fnmPosition.Security()
+	sec := fnmPosition.Security()
 	position := fnmPosition.Position()
-	closePrice, commission, err := f.openMarketOrder(ctx, security, position.Type.Inverse(), position.Quantity)
+	closePrice, err := f.openMarketOrder(ctx, sec, position.Type.Inverse(), position.Quantity)
 	if err != nil {
 		return trengin.Position{}, fmt.Errorf("open market order: %w", err)
 	}
 
-	position.AddCommission(commission)
 	if err := fnmPosition.Close(closePrice); err != nil {
 		return trengin.Position{}, fmt.Errorf("close: %w", err)
 	}
@@ -229,37 +250,37 @@ func (f *Finam) ClosePosition(
 }
 
 func (f *Finam) trackOpenPosition(ctx context.Context) error {
-	orders, trades, unsubscribe := f.orderTradeListener.Subscribe()
+	ordersCh, trades, unsubscribe := f.orderTradeListener.Subscribe()
 	defer unsubscribe()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-orders:
+		case <-ordersCh:
 			continue
 		case trade := <-trades:
-			if err := f.processTrade(trade); err != nil {
+			if err := f.processTrade(ctx, trade); err != nil {
 				return fmt.Errorf("process trade: %w", err)
 			}
 		}
 	}
 }
 
-func (f *Finam) processTrade(trade *tradeapi.TradeEvent) error {
+func (f *Finam) processTrade(ctx context.Context, trade *tradeapi.AccountTrade) error {
 	return f.positionStorage.ForEach(func(fnmPosition *finamPosition) error {
 		position := fnmPosition.Position()
-		// We check only Security Code. A trade doesn't have Security Board
-		if trade.SecurityCode != position.SecurityCode {
+		sec := fnmPosition.Security()
+		if !sameInstrument(trade.GetSymbol(), sec) {
 			return nil
 		}
-		longClosed := position.IsLong() && trade.GetBuySell() == tradeapi.BuySell_BUY_SELL_SELL
-		shortClosed := position.IsShort() && trade.GetBuySell() == tradeapi.BuySell_BUY_SELL_BUY
+		longClosed := position.IsLong() && trade.GetSide() == tradeapi.Side_SIDE_SELL
+		shortClosed := position.IsShort() && trade.GetSide() == tradeapi.Side_SIDE_BUY
 		if !longClosed && !shortClosed {
 			return nil
 		}
 
-		stopOrderExecuted, err := f.stopOrderExecuted(fnmPosition)
+		stopOrderExecuted, err := f.stopOrderExecuted(ctx, fnmPosition)
 		if err != nil {
 			return fmt.Errorf("stop order executed: %w", err)
 		}
@@ -271,16 +292,16 @@ func (f *Finam) processTrade(trade *tradeapi.TradeEvent) error {
 		fnmPosition.AddOrderTrade(trade)
 
 		var executedQuantity int64
-		for _, trade := range fnmPosition.Trades() {
-			executedQuantity += trade.GetQuantity() / int64(fnmPosition.Security().LotSize)
+		for _, t := range fnmPosition.Trades() {
+			executedQuantity += sec.lots(mustDecimalToFloat(t.GetSize()))
 		}
 		if executedQuantity < position.Quantity {
 			logger.Info("Position partially closed", zap.Any("executedQuantity", executedQuantity))
 			return nil
 		}
 
-		fnmPosition.AddCommission(trade.Commission)
-		if err := fnmPosition.Close(trade.Price); err != nil {
+		closePrice := mustDecimalToFloat(trade.GetPrice())
+		if err := fnmPosition.Close(closePrice); err != nil {
 			if errors.Is(err, trengin.ErrAlreadyClosed) {
 				logger.Info("Position already closed")
 				return nil
@@ -292,84 +313,75 @@ func (f *Finam) processTrade(trade *tradeapi.TradeEvent) error {
 	})
 }
 
-func (f *Finam) stopOrderExecuted(position *finamPosition) (bool, error) {
-	result, err := f.client.GetStops(true, false, false)
-	if err != nil {
-		return false, fmt.Errorf("get stops: %w", err)
+func (f *Finam) stopOrderExecuted(ctx context.Context, position *finamPosition) (bool, error) {
+	stopID := position.StopID()
+	if stopID == "" {
+		return false, nil
 	}
 
-	for _, stop := range result.GetStops() {
-		if stop.StopId == position.stopID {
-			return true, nil
-		}
+	state, err := f.client.orders.GetOrder(ctx, &orders.GetOrderRequest{
+		AccountId: f.accountID,
+		OrderId:   stopID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("get order: %w", err)
 	}
-	return false, nil
+
+	switch state.GetStatus() {
+	case orders.OrderStatus_ORDER_STATUS_SL_EXECUTED,
+		orders.OrderStatus_ORDER_STATUS_TP_EXECUTED,
+		orders.OrderStatus_ORDER_STATUS_FILLED,
+		orders.OrderStatus_ORDER_STATUS_EXECUTED:
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
-// Return openPrice, commission
 func (f *Finam) openMarketOrder(
 	ctx context.Context,
-	security *tradeapi.Security,
+	sec *security,
 	positionType trengin.PositionType,
 	quantity int64,
-) (float64, float64, error) {
-	orders, trades, unsubscribe := f.orderTradeListener.Subscribe()
+) (float64, error) {
+	_, trades, unsubscribe := f.orderTradeListener.Subscribe()
 	defer unsubscribe()
 
-	req := &tradeapi.NewOrderRequest{
-		ClientId:      f.clientID,
-		SecurityBoard: security.Board,
-		SecurityCode:  security.Code,
-		BuySell:       f.buySell(positionType),
-		Quantity:      int32(quantity),
-		UseCredit:     f.useCredit,
-		Property:      tradeapi.OrderProperty_ORDER_PROPERTY_PUT_IN_QUEUE,
+	order := &orders.Order{
+		AccountId:   f.accountID,
+		Symbol:      sec.Symbol,
+		Quantity:    intToDecimal(sec.pieces(quantity)),
+		Side:        f.side(positionType),
+		Type:        orders.OrderType_ORDER_TYPE_MARKET,
+		TimeInForce: orders.TimeInForce_TIME_IN_FORCE_DAY,
 	}
-	orderResult, err := f.client.NewOrder(req)
+	orderState, err := f.client.orders.PlaceOrder(ctx, order)
 	if err != nil {
-		return 0, 0, fmt.Errorf("new order: %w", err)
+		return 0, fmt.Errorf("place order: %w", err)
 	}
-	f.logger.Debug("Order created", zap.Any("transactionId", orderResult.TransactionId))
+	f.logger.Debug("Order created", zap.String("orderId", orderState.GetOrderId()))
 
-	trade, err := f.waitTrade(ctx, orderResult.TransactionId, trades, orders)
+	trade, err := f.waitTrade(ctx, orderState.GetOrderId(), trades)
 	if err != nil {
-		return 0, 0, fmt.Errorf("wait trade: %w", err)
+		return 0, fmt.Errorf("wait trade: %w", err)
 	}
 	f.logger.Debug("Market order executed", zap.Any("trade", trade))
-	return trade.Price, trade.Commission, nil
+	return mustDecimalToFloat(trade.GetPrice()), nil
 }
 
 func (f *Finam) waitTrade(
 	ctx context.Context,
-	transactionID int32,
-	trades <-chan *tradeapi.TradeEvent,
-	orders <-chan *tradeapi.OrderEvent,
-) (*tradeapi.TradeEvent, error) {
-	var orderNo int64
+	orderID string,
+	trades <-chan *tradeapi.AccountTrade,
+) (*tradeapi.AccountTrade, error) {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(15 * time.Second):
+		case <-time.After(tradeWaitTimeout):
 			return nil, errors.New("trade wait timeout")
-		case o := <-orders:
-			// Find orderNo by transactionID
-			if orderNo != 0 {
-				continue
-			}
-			if o.TransactionId != transactionID {
-				continue
-			}
-			if o.OrderNo == 0 {
-				continue
-			}
-			orderNo = o.OrderNo
 		case trade := <-trades:
-			// Find trade by orderNo
-			if orderNo == 0 {
-				continue
-			}
-			if trade.OrderNo != orderNo {
+			if trade.GetOrderId() != orderID {
 				continue
 			}
 			return trade, nil
@@ -377,62 +389,61 @@ func (f *Finam) waitTrade(
 	}
 }
 
-func (f *Finam) buySell(positionType trengin.PositionType) tradeapi.BuySell {
+func (f *Finam) side(positionType trengin.PositionType) tradeapi.Side {
 	if positionType.IsShort() {
-		return tradeapi.BuySell_BUY_SELL_SELL
+		return tradeapi.Side_SIDE_SELL
 	}
-	return tradeapi.BuySell_BUY_SELL_BUY
+	return tradeapi.Side_SIDE_BUY
 }
 
 func (f *Finam) setStop(
-	security *tradeapi.Security,
+	ctx context.Context,
+	sec *security,
 	stopLossPrice float64,
 	takeProfitPrice float64,
 	position trengin.Position,
-) (int32, error) {
-	var stopLoss *tradeapi.StopLoss
+) (string, error) {
+	if stopLossPrice == 0 && takeProfitPrice == 0 {
+		return "", nil
+	}
+
+	sltp := &orders.SLTPOrder{
+		AccountId:   f.accountID,
+		Symbol:      sec.Symbol,
+		Side:        f.side(position.Type.Inverse()),
+		ValidBefore: orders.ValidBefore_VALID_BEFORE_GOOD_TILL_CANCEL,
+	}
+
+	pieces := intToDecimal(sec.pieces(position.Quantity))
 	if stopLossPrice != 0 {
 		orderPrice := f.addProtectiveSpread(position.Type, stopLossPrice)
-		stopLoss = &tradeapi.StopLoss{
-			ActivationPrice: f.round(stopLossPrice, security.Decimals),
-			Price:           f.round(orderPrice, security.Decimals),
-			Quantity: &tradeapi.StopQuantity{
-				Value: float64(position.Quantity),
-				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
-			},
-			UseCredit: f.useCredit,
-		}
+		sltp.QuantitySl = pieces
+		sltp.SlPrice = floatToDecimal(f.round(stopLossPrice, sec.Decimals))
+		sltp.LimitPrice = floatToDecimal(f.round(orderPrice, sec.Decimals))
 	}
-
-	var takeProfit *tradeapi.TakeProfit
 	if takeProfitPrice != 0 {
-		takeProfit = &tradeapi.TakeProfit{
-			ActivationPrice: f.round(takeProfitPrice, security.Decimals),
-			SpreadPrice: &tradeapi.StopPrice{
-				Value: f.protectiveSpreadPercent,
-				Units: tradeapi.StopPriceUnits_STOP_PRICE_UNITS_PERCENT,
-			},
-			Quantity: &tradeapi.StopQuantity{
-				Value: float64(position.Quantity),
-				Units: tradeapi.StopQuantityUnits_STOP_QUANTITY_UNITS_LOTS,
-			},
-			UseCredit: f.useCredit,
-		}
+		sltp.QuantityTp = pieces
+		sltp.TpPrice = floatToDecimal(f.round(takeProfitPrice, sec.Decimals))
+		sltp.TpGuardSpread = floatToDecimal(f.protectiveSpreadPercent)
+		sltp.TpSpreadMeasure = orders.TPSpreadMeasure_TP_SPREAD_MEASURE_PERCENT
 	}
 
-	stopResult, err := f.client.NewStop(&tradeapi.NewStopRequest{
-		ClientId:      f.clientID,
-		SecurityBoard: security.Board,
-		SecurityCode:  security.Code,
-		BuySell:       f.buySell(position.Type.Inverse()),
-		StopLoss:      stopLoss,
-		TakeProfit:    takeProfit,
+	stopResult, err := f.client.orders.PlaceSLTPOrder(ctx, sltp)
+	if err != nil {
+		return "", fmt.Errorf("place sltp order: %w", err)
+	}
+	return stopResult.GetOrderId(), nil
+}
+
+func (f *Finam) cancelStop(ctx context.Context, stopID string) error {
+	_, err := f.client.orders.CancelOrder(ctx, &orders.CancelOrderRequest{
+		AccountId: f.accountID,
+		OrderId:   stopID,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("new stop: %w", err)
+		return fmt.Errorf("cancel order: %w", err)
 	}
-
-	return stopResult.StopId, nil
+	return nil
 }
 
 func (f *Finam) addProtectiveSpread(positionType trengin.PositionType, price float64) float64 {
@@ -442,4 +453,15 @@ func (f *Finam) addProtectiveSpread(positionType trengin.PositionType, price flo
 
 func (f *Finam) round(val float64, decimals int32) float64 {
 	return math.Round(val*math.Pow10(int(decimals))) / math.Pow10(int(decimals))
+}
+
+func sameInstrument(tradeSymbol string, sec *security) bool {
+	if tradeSymbol == "" || sec == nil {
+		return false
+	}
+	if tradeSymbol == sec.Symbol {
+		return true
+	}
+	ticker, _, _ := strings.Cut(tradeSymbol, "@")
+	return strings.EqualFold(ticker, sec.Code)
 }
