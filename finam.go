@@ -58,12 +58,6 @@ func WithProtectiveSpreadPercent(protectiveSpread float64) Option {
 	}
 }
 
-// WithUseCredit is deprecated: Trade API v1 does not expose a use-credit flag.
-// The option is kept for backward compatibility and has no effect.
-func WithUseCredit(_ bool) Option {
-	return func(*Finam) {}
-}
-
 // WithSecurityCacheFile returns Option which sets path to securities cache file.
 // The default value is securities.json in current directory.
 func WithSecurityCacheFile(securityCacheFile string) Option {

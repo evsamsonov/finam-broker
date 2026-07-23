@@ -53,7 +53,6 @@ You can configure `Finam` to use `Option`
 | `WithProtectiveSpreadPercent` | Sets protective spread in percent for executing orders. The default value is 1%. |
 | `WithSecurityCacheFile`       | Sets path to securities cache file. Default is `./securities.json`               |
 | `WithEndpoint`                | Sets Finam Trade API gRPC endpoint. Default is `api.finam.ru:443`                |
-| `WithUseCredit`               | Deprecated. No-op for Trade API v1 compatibility.                                |
 
 Instruments are identified by `SecurityBoard` + `SecurityCode` from trengin actions
 (for example, `TQBR` + `SBER`). Internally they are resolved to Finam symbols like `SBER@MISX`.
