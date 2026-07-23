@@ -2,7 +2,7 @@
 Finam-checkup checks all methods of Finam Broker.
 It opens position, changes conditional orders, closes position.
 This can be useful for development, checking the ability
-to trade with a specific client id, security board and security code.
+to trade with a specific account id, security board and security code.
 
 How to install:
 
@@ -10,7 +10,7 @@ How to install:
 
 Usage:
 
-	finam-checkup [CLIENT_ID] [SECURITY_BOARD] [SECURITY_CODE] [flags]
+	finam-checkup [ACCOUNT_ID] [SECURITY_BOARD] [SECURITY_CODE] [flags]
 
 The flags are:
 
@@ -43,10 +43,10 @@ func main() {
 			"This command checks all methods of Finam Broker.\n" +
 				"It opens position, changes conditional orders, closes position.",
 		)
-		fmt.Println("\nUsage: finam-checkup [CLIENT_ID] [SECURITY_BOARD] [SECURITY_CODE] [-v]")
+		fmt.Println("\nUsage: finam-checkup [ACCOUNT_ID] [SECURITY_BOARD] [SECURITY_CODE] [-v]")
 		return
 	}
-	clientID := os.Args[1]
+	accountID := os.Args[1]
 	securityBoard := os.Args[2]
 	securityCode := os.Args[3]
 
@@ -55,7 +55,7 @@ func main() {
 		log.Fatalf("Failed to parse args: %s", err)
 	}
 
-	checkupParams := NewCheckupParams(clientID, securityBoard, securityCode)
+	checkupParams := NewCheckupParams(accountID, securityBoard, securityCode)
 	if err := checkupParams.AskUser(); err != nil {
 		log.Fatalf("Failed to get checkup params: %s", err)
 	}
@@ -71,7 +71,7 @@ func main() {
 }
 
 type CheckUpArgs struct {
-	clientID         string
+	accountID        string
 	securityBoard    string
 	securityCode     string
 	token            string
@@ -80,9 +80,9 @@ type CheckUpArgs struct {
 	positionType     trengin.PositionType
 }
 
-func NewCheckupParams(clientID, securityBoard, securityCode string) CheckUpArgs {
+func NewCheckupParams(accountID, securityBoard, securityCode string) CheckUpArgs {
 	return CheckUpArgs{
-		clientID:      clientID,
+		accountID:     accountID,
 		securityBoard: securityBoard,
 		securityCode:  securityCode,
 	}
@@ -144,7 +144,7 @@ func NewCheckuper(verbose bool) (*Checkuper, error) {
 }
 
 func (t *Checkuper) CheckUp(params CheckUpArgs) error {
-	broker := fnmbroker.New(params.token, params.clientID, fnmbroker.WithLogger(t.logger))
+	broker := fnmbroker.New(params.token, params.accountID, fnmbroker.WithLogger(t.logger))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	g, ctx := errgroup.WithContext(ctx)

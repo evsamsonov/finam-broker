@@ -10,10 +10,10 @@ lint: ## Run golang lint using docker
 	go mod download
 	docker run --rm \
 		-v ${GOPATH}/pkg/mod:/go/pkg/mod \
- 		-v ${PWD}:/app \
- 		-w /app \
-	    golangci/golangci-lint:v1.55.2 \
-	    golangci-lint run -v --modules-download-mode=readonly --fix
+		-v ${PWD}:/app \
+		-w /app \
+		golangci/golangci-lint:v1.64.8 \
+		golangci-lint run -v --modules-download-mode=readonly --timeout=5m
 
 test: ## Run tests
 	GOARCH=amd64 go test -gcflags='-N -l' ./...
@@ -21,8 +21,8 @@ test: ## Run tests
 doc: ## Run doc server using docker
 	@echo "Doc server runs on http://127.0.0.1:6060"
 	docker run --rm \
-        -p 127.0.0.1:6060:6060 \
-        -v ${PWD}:/go/src/github.com/evsamsonov/finam-broker \
-        -w /go/src/github.com/evsamsonov/finam-broker \
-        golang:latest \
-        bash -c "go install golang.org/x/tools/cmd/godoc@latest && /go/bin/godoc -http=:6060"
+		-p 127.0.0.1:6060:6060 \
+		-v ${PWD}:/go/src/github.com/evsamsonov/finam-broker \
+		-w /go/src/github.com/evsamsonov/finam-broker \
+		golang:latest \
+		bash -c "go install golang.org/x/tools/cmd/godoc@latest && /go/bin/godoc -http=:6060"
